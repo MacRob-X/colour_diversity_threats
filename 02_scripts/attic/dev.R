@@ -39,6 +39,95 @@ handle_csv <- function(iucn_species, binomial_name, csv_writepath, threats_df){
   
 }
 
+# function to deal with species that have no IUCN data (e.g. Cacicus leucoramphus)
+handle_missing_species <- function(binomial_name, threats_skeleton, csv_writepath = NULL){
+  
+  warning("No IUCN data for ", binomial_name, ". Returning NA row with 'no_data' in notes.")
+  
+  # assign threat skeleton
+  threat_data <- threats_skeleton
+  
+  # remove "description" column as we don't need it and it contains commas, which messes with
+  # CSV writing
+  threat_data$description <- NULL
+  
+  # initialise df for data (following IUCN threat classification scheme)
+  # https://www.iucnredlist.org/resources/threat-classification-scheme
+  assessment_year <- NA
+  iucn_cat <- NA
+  notes <- "no_data"
+  threats_df <- cbind(binomial_name, threat_data, assessment_year, iucn_cat, notes)
+  # save CSV if required
+  if(!is.null(csv_writepath)){
+    handle_csv(iucn_species = iucn_species, binomial_name = binomial_name, csv_writepath = csv_writepath, threats_df = threats_df)
+  }
+  # 2 second delay makes API work better - recommended by IUCN
+  Sys.sleep(2)
+  return(threats_df)
+  
+}
+
+# Function to deal with species which have no 'latest' data (e.g. Calliphlox_evelynae)
+# These are probably mostly invalid taxa, e.g. Calliphlox_evelynae was moved to Nesophlox_evelynae 
+# and subsequently split into two taxa, N. evelynae and N. lyrura). We will keep these species in 
+# but put in the notes that they are now reassigned to other taxa
+handle_no_latest_data <- function(binomial_name, species_history, year_cutoff, csv_writepath = NULL){
+  
+  warning("No 'latest' IUCN data for ", binomial_name, ". Returning most recent data with 'no_latest_data' in notes.")
+  
+  # use the data from the latest pre-cutoff assessment
+  # first check if there is data from before the cutoff year
+  if(any(species_history$year_published <= year_cutoff)){
+    # should already be in reverse date order but let's order just in case
+    ordered_history <- species_history[order(species_history$year_published, decreasing = T), ]
+    # get assessment id for relevant year
+    assess_id <- ordered_history[which(ordered_history$year_published <= year_cutoff)[1], "assessment_id"]
+    # get data
+    species_data <- rredlist::rl_assessment(id = assess_id, key = api)
+    
+    
+    # create and populate threats df
+    
+    # extract threat data
+    threat_data <- species_data$threats
+    # if there are no threats then we use the threats skeleton - this will then populate the threat matrix with NA
+    # for this species
+    if(length(threat_data) == 0){
+      threat_data <- threats_skeleton
+    }
+    # remove "description" column as we don't need it and it contains commas, which messes with
+    # CSV writing
+    threat_data$description <- NULL
+    
+    notes <- "no_latest_data"
+    assessment_year <- species_data$year_published
+    iucn_cat <- species_data$red_list_category$code
+    threats_df <- cbind(binomial_name, threat_data, assessment_year, iucn_cat, notes)
+    
+  } else {
+    # if there isn't, use the skeleton but with "no_precutoff_data" in notes column
+    warning("No IUCN data pre-cutoff year for ", binomial_name, ". Returning NA row with 'no_precutoff_data' in notes.")
+    threat_data <- threats_skeleton
+    # remove "description" column as we don't need it and it contains commas, which messes with
+    # CSV writing
+    threat_data$description <- NULL
+    notes <- "no_precutoff_data"
+    assessment_year <- NA
+    iucn_cat <- NA
+    threats_df <- cbind(binomial_name, threat_data, assessment_year, iucn_cat, notes)
+    
+  }
+  
+  # save CSV if required
+  if(!is.null(csv_writepath)){
+    handle_csv(iucn_species = iucn_species, binomial_name = binomial_name, csv_writepath = csv_writepath, threats_df = threats_df)
+  }
+  # 2 second delay makes API work better - recommended by IUCN
+  Sys.sleep(2)
+  return(threats_df)
+  
+}
+
 # get specific threat data for all species
 # note that this gets the latest data - this may be different to the 2023-1 IUCN Red List version
 # I used in Chapter 1 for some species
@@ -56,34 +145,63 @@ get_threat_data <- function(binomial_name, threats_skeleton, latest = TRUE, year
   genus_name <- strsplit(binomial_name, split = "_")[[1]][1]
   species_name <- strsplit(binomial_name, split = "_")[[1]][2]
   
+
   # if using latest threat data
   if(latest == TRUE){
     # get species data
-    species_data <- rredlist::rl_species_latest(genus = genus_name, species = species_name, key = api)
+    species_data <- try(rredlist::rl_species_latest(genus = genus_name, species = species_name, key = api))
+    notes <- NA
+    if(class(species_data) == "try-error"){ # check if there is actually any IUCN data for the species - if not, return threats skeleton with explanatory note
+      threats_df <- handle_missing_species(binomial_name, threats_skeleton, csv_writepath)
+      return(threats_df)
+    }
   } else if(latest == FALSE){
     # if not using latest data
     
     # get list of all assessments for species
-    species_history <- rredlist::rl_species(genus = genus_name, species = species_name, key = api)$assessments
+    species_history <- try(rredlist::rl_species(genus = genus_name, species = species_name, key = api))
+    if(class(species_history) == "try-error"){ # check if there is actually any IUCN data for the species - if not, return threats skeleton with explanatory note
+      threats_df <- handle_missing_species(binomial_name, threats_skeleton, csv_writepath)
+      return(threats_df)
+    } else {
+      species_history <- species_history$assessments
+    }
     # check if the latest assessment is from pre-cutoff year
     # note some species seem to have multiple marked as 'latest' - use the first of these
+    # note also some species (e.g. Calliphlox_evelynae) have no records marked as 'latest' - 
+    # these are invalid taxa (e.g. Calliphlox_evelynae was moved to Nesophlox_evelynae and subsequently
+    # split into two taxa, N. evelynae and N. lyrura). We will keep these species in but put in the notes
+    # that they are now reassigned to other taxa
+    if(!(any(species_history$latest == TRUE))){
+      threats_df <- handle_no_latest_data(binomial_name, species_history, year_cutoff, csv_writepath)
+      return(threats_df)
+    }
     if(species_history[species_history$latest == TRUE, "year_published"][1] <= year_cutoff){
       # if it is, just use the latest assessment
       species_data <- rredlist::rl_species_latest(genus = genus_name, species = species_name, key = api)
+      notes <- NA
     } else {
       # if it isn't, use the data from the first pre-cutoff assessment
       # first check if there is data from before the cutoff year
       if(any(species_history$year_published <= year_cutoff)){
-        assess_id <- species_history[which(species_history$year_published <= year_cutoff)[1], "assessment_id"]
+        # should already be in reverse date order but let's order just in case
+        ordered_history <- species_history[order(species_history$year_published, decreasing = T), ]
+        # get assessment id for relevant year
+        assess_id <- ordered_history[which(ordered_history$year_published <= year_cutoff)[1], "assessment_id"]
+        # get data
         species_data <- rredlist::rl_assessment(id = assess_id, key = api)
+        notes <- NA
       } else {
-        # if there isn't, use the skeleton but populated with "no_precutoff_data"
-        warning("No IUCN data pre-cutoff year for ", binomial_name, ". Returning row of 'no_precutoff_data'.")
+        # if there isn't, use the skeleton but with "no_precutoff_data" in notes column
+        warning("No IUCN data pre-cutoff year for ", binomial_name, ". Returning NA row with 'no_precutoff_data' in notes.")
         threat_data <- threats_skeleton
-        threat_data[1, ] <- "no_precutoff_data"
-        assessment_year <- "no_precutoff_data"
-        iucn_cat <- "no_precutoff_data"
-        threats_df <- cbind(binomial_name, threat_data, assessment_year, iucn_cat)
+        # remove "description" column as we don't need it and it contains commas, which messes with
+        # CSV writing
+        threat_data$description <- NULL
+        notes <- "no_precutoff_data"
+        assessment_year <- NA
+        iucn_cat <- NA
+        threats_df <- cbind(binomial_name, threat_data, assessment_year, iucn_cat, notes)
         # save CSV if required
         if(!is.null(csv_writepath)){
           handle_csv(iucn_species = iucn_species, binomial_name = binomial_name, csv_writepath = csv_writepath, threats_df = threats_df)
@@ -99,10 +217,11 @@ get_threat_data <- function(binomial_name, threats_skeleton, latest = TRUE, year
   
   # extract threat data
   threat_data <- species_data$threats
-  # if there are no threats is LC then we use the threats skeleton - this will then populate the threat matrix with NA
+  # if there are no threats then we use the threats skeleton - this will then populate the threat matrix with NA
   # for this species
   if(length(threat_data) == 0){
     threat_data <- threats_skeleton
+    notes <- "no_threats"
   }
   # remove "description" column as we don't need it and it contains commas, which messes with
   # CSV writing
@@ -117,7 +236,7 @@ get_threat_data <- function(binomial_name, threats_skeleton, latest = TRUE, year
   # https://www.iucnredlist.org/resources/threat-classification-scheme
   assessment_year <- species_data$year_published
   iucn_cat <- species_data$red_list_category$code
-  threats_df <- cbind(binomial_name, threat_data, assessment_year, iucn_cat)
+  threats_df <- cbind(binomial_name, threat_data, assessment_year, iucn_cat, notes)
   # for second-order threats only
   # threats_df <- matrix(NA, nrow = 1, ncol = length(iucn_threat_types) + 3)
   # colnames(threats_df) <- c("species", "iucn_cat", "assessment_year", iucn_threat_types)
@@ -196,17 +315,32 @@ iucn_threat_types <- rredlist::rl_threats(key = api)$threats
 am_assess <- rredlist::rl_species(genus = "Aburria", species = "aburri", key = api)$assessments
 a_a_assess_id <- am_assess[am_assess$year_published == "2023", "assessment_id"]
 threats_skeleton <- rredlist::rl_assessment(id = a_a_assess_id, key = api)$threats[1, ]
-threats_skeleton[1, ]="NA"
+threats_skeleton[1, ] = NA
 
 # get threat data for all species - with a 2023 cutoff
+# this will write to a new CSV if the specified filename and path doesn't exist yet, or append if
+# it already exists
 cutoff_year <- 2023
 filename <- paste("iucn_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
 writepath <- here::here(
   "03_output_data", filename
 )
-allspec_threat_data <- lapply(iucn_species[101:750], get_threat_data, latest = FALSE, year_cutoff = cutoff_year, csv_writepath = writepath, threats_skeleton = threats_skeleton)
+allspec_threat_data <- lapply(iucn_species[1501:length(iucn_species)], get_threat_data, latest = FALSE, year_cutoff = cutoff_year, csv_writepath = writepath, threats_skeleton = threats_skeleton)
 threat_matrix <- do.call(rbind, allspec_threat_data)
 
+# troubleshoot individual species
+# Problem species: 606; 1163
+# 606 (Apalis_karamojae): no data pre-2023
+# 1163 (Cacicus leucoramphus): no data at all
+# 1214 (Calliphlox_evelynae):
+debug(get_threat_data)
+get_threat_data(iucn_species[1214], latest = F, threats_skeleton = threats_skeleton, year_cutoff = cutoff_year)
+try_res <- try(rredlist::rl_species_latest(genus = "Cacicus", species = "leucoramphus", key = api))
+rredlist::rl_species(genus = "Cacicus", species = "leucoramphus", key = api)
+# Cacicus leucoramphus doesn't seem to have any assessment data even though it's in the big IUCN
+# species list - it looks like it's now conspecific with C. chrysonotus, but they're split in 
+# the colour data so ideally I'd like to get the C. leucoramphus assessment if possible
+# for now let's add a "try" to the species data retrieval
 
 # get threat data for all species - latest data
 filename <- paste("iucn_threat_matrix_latest_", Sys.Date(), ".csv")
