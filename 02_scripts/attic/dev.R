@@ -356,6 +356,10 @@ threat_matrix <- do.call(rbind, allspec_threat_data)
 # Match taxonomies ----
 
 
+
+
+
+
 # Regress distance to centroid against threat type ----
 
 library(dplyr)
@@ -382,6 +386,7 @@ threat_matrix$second_ord_code <- stringr::str_extract(threat_matrix$code, "[^_]*
 # of that paper
 # There are many threats that aren't assigned to one of these groups - this is because these
 # threats were non-significant in predicting IUCN threat level in Stewart et al 2025
+# We assign these as 'FLAG' in case we want to do anything with them later
 
 # Groups
 # Accidental mortality and disturbance
@@ -439,6 +444,29 @@ threat_matrix <- threat_matrix |>
     )
   )
 
+
+# For now, let's make all the flagged threats (i.e. those which are not significant predictors
+# of extinction risk) NA, as we're not interested them
+threat_matrix <- threat_matrix |> 
+  mutate(
+    ex_driver = ifelse(
+      ex_driver == "FLAG",
+      NA,
+      ex_driver
+    )
+  )
+
+# DECISION: let's also make ALL threats for non-threatened (i.e., LC) species NA, as we're not
+# interested in threats to LC species
+# threat_matrix <- threat_matrix |> 
+#   mutate(
+#     ex_driver = ifelse(
+#       iucn_cat == "LC",
+#       NA,
+#       ex_driver
+#     )
+#   )
+
 # Plot 
 threat_matrix |>
   ggplot(aes(x = ex_driver)) + 
@@ -455,16 +483,18 @@ centr_dists <- data.frame(
 
 # add distance to centroid onto threat matrix
 threat_centr <- threat_matrix |> 
-  full_join(centr_dists, by = join_by("binomial_name" == "species"))
+  inner_join(centr_dists, by = join_by("binomial_name" == "species"))
 
 # remove duplicates based on second-order code
 threat_centr_clean <- threat_centr |> 
   distinct(second_ord_code, binomial_name, sex, .keep_all = TRUE)
 
-# boxplot of centroid distances by threat type
+# boxplot of centroid distances by threat type - exclude LC species
 threat_centr_clean |> 
   filter(
-    !is.na(sex)
+    !is.na(sex),
+    !is.na(ex_driver)
+ #   iucn_cat != "LC"
   ) |> 
   ggplot(aes(x = ex_driver, y = centr_dists, fill = ex_driver)) + 
   geom_boxplot() + 
@@ -477,6 +507,14 @@ summary(an_m)
 lm_m <- lm(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "M", ])
 av_m <- aov(lm_m)
 TukeyHSD(av_m)
+
+an_f <- aov(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "F", ])
+summary(an_f)
+# post-hoc Tukey test
+lm_f <- lm(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "F", ])
+av_f <- aov(lm_f)
+TukeyHSD(av_f)
+
 
 log_mod_f <- lm(centr_dists ~ ex_driver - 1, data = threat_centr_clean[threat_centr_clean$sex == "F", ])
 summary(log_mod_f)
