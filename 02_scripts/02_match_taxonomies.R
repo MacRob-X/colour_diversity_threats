@@ -131,6 +131,9 @@ jetz_avonet_threat <- jetz_avonet |>
     by = join_by("species_birdlife" == "threat_species")
   )
 
+# Check what match types exist
+match_types <- unique(jetz_avonet_threat$match_type)
+
 # All the species that are 1-1 matched are fine, we don't need to do anything
 # there are 6783 of these
 one_to_one_matched <- jetz_avonet_threat |> 
@@ -198,10 +201,229 @@ no_nom_subspecies <- no_nom_subspecies |>
       F
     )
   )
-unique(length(no_nom_subspecies$jetz_species[no_nom_subspecies$nominate == T]))
-unique(length(no_nom_subspecies$jetz_species[no_nom_subspecies$nominate == F]))
-# This directly matches another 94 Jetz species to a nominate subspecies, leaving 212 Jetz species unmatched to nominate subspecies
+length(unique(no_nom_subspecies$jetz_species[no_nom_subspecies$nominate == T]))
+length(unique(no_nom_subspecies$jetz_species)) - length(unique(no_nom_subspecies$jetz_species[no_nom_subspecies$nominate == T]))
+# This directly matches another 94 Jetz species to a nominate subspecies, leaving 33 Jetz species unmatched to nominate subspecies
 
+# Let's split into the species we've already got a nominate subspecies for and those we don't
+fixed_no_nom_subspecies <- no_nom_subspecies |> 
+  filter(
+    nominate == TRUE
+  )
+still_no_nom_subspecies <- no_nom_subspecies |> 
+  filter(
+    !(jetz_species %in% unique(no_nom_subspecies$jetz_species[no_nom_subspecies$nominate == T]))
+  )
 
 # Some of these will just be a case of an -us changing to an -a or vice versa - we can catch these
+# first ones where the Jetz species name ends in -a and the BL species name ends in -us
+fixed_a_us_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    short_jetz_spec = ifelse(grepl("a$", jetz_spec_only), stringr::str_sub(jetz_spec_only, end = -2), jetz_spec_only),
+    short_bl_spec = ifelse(grepl("us$", bl_spec_only), stringr::str_sub(bl_spec_only, end = -3), bl_spec_only)
+  ) |> 
+  filter(
+    short_jetz_spec == short_bl_spec
+  ) |> 
+  mutate(
+    nominate = TRUE
+  ) |> 
+  select(
+    -short_jetz_spec,
+    -short_bl_spec
+  )
+# now ones where the Jetz species name ends in -us and the BL species name ends in -a
+fixed_us_a_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    short_jetz_spec = ifelse(grepl("us$", jetz_spec_only), stringr::str_sub(jetz_spec_only, end = -3), jetz_spec_only),
+    short_bl_spec = ifelse(grepl("a$", bl_spec_only), stringr::str_sub(bl_spec_only, end = -2), bl_spec_only)
+  ) |> 
+  filter(
+    short_jetz_spec == short_bl_spec
+  ) |> 
+  mutate(
+    nominate = TRUE
+  ) |> 
+  select(
+    -short_jetz_spec,
+    -short_bl_spec
+  )
 
+# combine into the fixed no-nom subspecies df
+fixed_no_nom_subspecies <- fixed_no_nom_subspecies |> 
+  bind_rows(
+    fixed_a_us_no_nom_subspecies,
+    fixed_us_a_no_nom_subspecies
+  )
+
+# Now get the ones that STILL don't have a nominate subspecies assigned
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  filter(
+    !(jetz_species %in% fixed_no_nom_subspecies$jetz_species)
+  )
+length(unique(still_no_nom_subspecies$jetz_species))
+# there are only 11 species left with no match - I can just manually check these using the taxonomy 
+# section on the IUCN website and we're good to go - accessed 2025-12-09
+
+# Jetz: Arses_telescophthalmus
+# Nominate BL: Arses_telescopthalmus
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    nominate = ifelse(
+      jetz_species == "Arses_telescophthalmus" & species_birdlife == "Arses_telescopthalmus",
+      TRUE,
+      nominate
+    )
+  )
+# Jetz: Cinclidium_leucurum
+# Nominate BL: Myiomela_leucura
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    nominate = ifelse(
+      jetz_species == "Cinclidium_leucurum" & species_birdlife == "Myiomela_leucura",
+      TRUE,
+      nominate
+    )
+  )
+# Jetz: Coracina_tenuirostris
+# Nominate BL: Edolisoma_tenuirostre
+# still_no_nom_subspecies <- still_no_nom_subspecies |> 
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+  nominate = ifelse(
+    jetz_species == "Coracina_tenuirostris" & species_birdlife == "Edolisoma_tenuirostre",
+    TRUE,
+    nominate
+  )
+)
+# Jetz: Monarcha_castaneiventris
+# NOTE: this one is an imperfect match - from IUCN website 2025-12-19: "Monarcha castaneiventris 
+# and M. erythrostictus (Sibley and Monroe [1990, 1993]) have been lumped and split into 
+# M. castaneiventris, M. megarhynchus and M. ugiensis following del Hoyo and Collar (2016)."
+# Since we already have M. castaneiventris BT matched to M. castaneiventris and we don't have
+# colour information for M. erythrostictus, we can just use the existing match and ignore
+# the other BL species (Monarcha_megarhynchus and Monarcha_ugiensis)
+
+# Jetz: Nectarinia_afra
+# Nominate BL: Cinnyris_afer
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    nominate = ifelse(
+      jetz_species == "Nectarinia_afra" & species_birdlife == "Cinnyris_afer",
+      TRUE,
+      nominate
+    )
+)
+# Jetz: Phylloscopus_poliocephalus
+# NOTE: imperfect match - from IUCN website 2025-12-19: "Phylloscopus poliocephalus and 
+# P. makirensis (Sibley and Monroe [1990, 1993]) have been lumped and subsequently split into 
+# P. poliocephalus, P. misoriensis and P. maforensis following del Hoyo and Collar (2016)."
+# Since we already have P. poliocephalus and P. makirensis BT matched to P. poliocephalus BL, 
+# we can ignore the other BL species (Phylloscopus_maforensis and Phylloscopus_misoriensis)
+
+# Jetz: Picus_mentalis
+# Nominate BL: Chrysophlegma_mentale
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    nominate = ifelse(
+      jetz_species == "Picus_mentalis" & species_birdlife == "Chrysophlegma_mentale",
+      TRUE,
+      nominate
+    )
+)
+# Jetz: Stachyris_erythroptera
+# Nominate BL: Cyanoderma_erythropterum
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    nominate = ifelse(
+      jetz_species == "Stachyris_erythroptera" & species_birdlife == "Cyanoderma_erythropterum",
+      TRUE,
+      nominate
+    )
+)
+# Jetz: Tangara_cyanoptera
+# This one is a strange one: Jetz taxonomy contains both Tangara_cyanoptera AND Thraupis_cyanoptera,
+# even though these are considered synonyms by the IUCN. Thraupis_cyanoptera (BT) is 1-1 matched
+# to Tangara_cyanoptera (BL), but Tangara_cyanoptera (BT) is matched to both Tangara_argentea and 
+# Tangara_whitelyi (BL).
+# From IUCN 2025-12-19: "Tangara argentea and T. whiteleyi (del Hoyo and Collar 2016) were previously lumped and listed as T. cyanoptera following SACC (2005 & updates); Sibley & Monroe (1990, 1993); Stotz et al. (1996)."
+# I will use the illustrations in birdsoftheworld.org to visually inspect which species we have 
+# images of
+# Ok - it's pretty clear that: 
+# Thraupis_cyanoptera (BT) = Tangara_cyanoptera (BL) : blue all over
+# Tangara_cyanoptera (BT) = Tangara_argentea (BL) : Black head, yellow body, blue & black wings
+# We don't have Tangara_whitelyi (BL) in our image set : Black head, off-white body
+# Nominate BL: Tangara_argentea
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    nominate = ifelse(
+      jetz_species == "Tangara_cyanoptera" & species_birdlife == "Tangara_argentea",
+      TRUE,
+      nominate
+    )
+)
+# Jetz: Tephrodornis_gularis
+# There is no obvious nominate subspecies for this, as there are two BL matches (Tephrodornis_sylvicola
+# and Tephrodornis_virgatus). We therefore follow Stewart et al 2025 and select one of these at random
+# (see Stewart et al 2025 Nat Ecol Evol Supplementary Information - Reconciling BirdLife and BirdTree 
+# taxonomies and including all BirdLife synonyms)
+# Nominate subspecies: Tephrodornis_sylvicola
+still_no_nom_subspecies <- still_no_nom_subspecies |> 
+  mutate(
+    nominate = ifelse(
+      jetz_species == "Tephrodornis_gularis" & species_birdlife == "Tephrodornis_sylvicola",
+      TRUE,
+      nominate
+    )
+)
+# Jetz: Zosterops_palpebrosus
+# NOTE: imperfect match - from IUCN website 2025-12-19: "Oriental White-eye Zosterops palpebrosus 
+# has been split into Indian White-eye Z. palpebrosus, Hume's White-eye Z. auriventer and Sangkar 
+# White-eye Z. melanurus on the basis of thorough morphological comparisons (Wells et al. 2017a, b) 
+# and genetic differentiation, morphology and vocalisations (Round et al. 2017, Lim et al. 2019)."
+# Since we already have Zosterops_palpebrosus (BT) matched to Zosterops_palpebrosus (BL), we can ignore
+# these other BL species (Zosterops_auriventer and Zosterops_melanurus)
+
+# Now add these species into the fixed no-nominate dataset and we're basically done
+fixed_no_nom_subspecies <- fixed_no_nom_subspecies |> 
+  bind_rows(
+    still_no_nom_subspecies[still_no_nom_subspecies$nominate == T, ]
+  ) |> 
+  select(
+   -jetz_spec_only, -bl_spec_only, -nominate 
+  )
+
+# Put all the different match types together
+nom_subspecies <- nom_subspecies |> 
+  select(
+    -nominate
+  )
+final_matched_data <- one_to_one_matched |> 
+  bind_rows(
+    one_bl_to_many_bt
+  ) |> 
+  bind_rows(
+    nom_subspecies
+  ) |> 
+  bind_rows(
+    fixed_no_nom_subspecies
+  ) |> 
+  select(
+    jetz_species, species_birdlife
+  )
+
+# And finally, add the threat data to get the finished, matched threat dataset for the Jetz taxonomy
+final_jetz_threat_data <- final_matched_data |> 
+  left_join(
+    threat_matrix,
+    join_by("species_birdlife" == "binomial_name")
+  )
+
+# Write to CSV
+write.csv(
+  final_jetz_threat_data,
+  file = here::here(
+    "03_output_data", paste("jetz_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
+  ), 
+  row.names = F
+)
