@@ -29,7 +29,7 @@ threat_matrix <- read.csv(
 
 # load colour pattern space
 # load colour pattern space (created in Chapter 1 - patch-pipeline)
-colspace_path <- "G:/My Drive/patch-pipeline/2_Patches/3_OutputData/Neognaths/2_PCA_ColourPattern_spaces/1_Raw_PCA/Neognaths.matchedsex.patches.250716.PCAcolspaces.rds"
+colspace_path <- "G:/My Drive/patch-pipeline/2_Patches/3_OutputData/Aves/2_PCA_ColourPattern_spaces/1_Raw_PCA/Aves.matchedsex.patches.250716.PCAcolspaces.rds"
 colour_space <- readRDS(
   colspace_path
   )[["lab"]][["x"]]
@@ -135,7 +135,7 @@ jetz_avonet_threat <- jetz_avonet |>
 match_types <- unique(jetz_avonet_threat$match_type)
 
 # All the species that are 1-1 matched are fine, we don't need to do anything
-# there are 6783 of these
+# there are 6806 of these
 one_to_one_matched <- jetz_avonet_threat |> 
   filter(
     match_type == "1_bl_to_1_bt"
@@ -146,7 +146,7 @@ one_to_one_matched <- jetz_avonet_threat |>
 
 # All the species that are a single BL species to many Jetz species are also fine
 # we can just use the threat data for the single BL species for many Jetz species
-# there are 167 of these
+# there are 168 of these
 one_bl_to_many_bt <- jetz_avonet_threat |> 
   filter(
     match_type == "1_bl_to_many_bt"
@@ -175,7 +175,7 @@ nom_subspecies <- many_bl_to_one_bt |>
   mutate(
     nominate = T
   )
-# 593 of these, so most of them
+# 595 of these, so most of them
 
 # Check how many don't have an obvious nominate subspecies candidate
 no_nom_subspecies <- many_bl_to_one_bt |> 
