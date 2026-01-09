@@ -8,16 +8,16 @@ library(dplyr)
 
 ## EDITABLE CODE ##
 # Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
-latest <- FALSE
+latest <- TRUE
 # If not using latest assessment data, specify a cutoff year. Set to NULL if using latest.
-cutoff_year <- 2023
+cutoff_year <- NULL
 
 # Load data ----
 
 # Load threat data
 # Set CSV filename and path
 if(latest == TRUE){
-  threat_filename <- paste0("iucn_threat_matrix_latest_", Sys.Date(), ".csv")
+  threat_filename <- paste0("iucn_threat_matrix_latest_2026-01-07.csv")
 } else if(latest == FALSE){
   threat_filename <- paste("iucn_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
 }
@@ -146,7 +146,7 @@ one_to_one_matched <- jetz_avonet_threat |>
 
 # All the species that are a single BL species to many Jetz species are also fine
 # we can just use the threat data for the single BL species for many Jetz species
-# there are 168 of these
+# there are 168 BT species of these, corresponding to 94 BL species
 one_bl_to_many_bt <- jetz_avonet_threat |> 
   filter(
     match_type == "1_bl_to_many_bt"
@@ -158,7 +158,7 @@ one_bl_to_many_bt <- jetz_avonet_threat |>
 # For the species that are many BL species to a single Jetz species, it's a bit more complicated
 # I need to try to use the threat data for the single BL species that corresponds to the nominate
 # Jetz subspecies, since we mostly have colour data for the nominate subspecies
-# There are 720 of these
+# There are 722 BT species of these, corresponding to 1727 BL species
 many_bl_to_one_bt <- jetz_avonet_threat |> 
   filter(
     match_type == "many_bl_to_1_bt"
@@ -420,10 +420,16 @@ final_jetz_threat_data <- final_matched_data |>
   )
 
 # Write to CSV
+if(latest == TRUE){
+  jetz_threat_filename <- paste0("jetz_threat_matrix_latest_2026-01-07.csv")
+} else if(latest == FALSE){
+  jetz_threat_filename <- paste("jetz_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
+}
+
 write.csv(
   final_jetz_threat_data,
   file = here::here(
-    "03_output_data", paste("jetz_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
+    "03_output_data", jetz_threat_filename
   ), 
   row.names = F
 )
