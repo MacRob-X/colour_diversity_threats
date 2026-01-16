@@ -7,6 +7,7 @@ rm(list=ls())
 # Load libraries ----
 library(dplyr)
 library(ggplot2)
+library(ggridges)
 
 ## EDITABLE CODE ##
 # Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
@@ -178,65 +179,193 @@ tukey_centr_dists_f <- TukeyHSD(av_f)
 
 # Individual PC axes ----
 
-# Choose axes to loop over - use 7, as parallel analysis indicates this many statistically significant dimensions
-axes <- paste0("PC", 1:7)
+# Plot distribution of centroid distances for each threat type
 
-# get species and sex with colourspace values
+# Density plot of all species' centroid distance (excluding LC) vs species threatened by each threat type
+threat_centr_clean |> 
+  bind_rows(
+    threat_centr_clean |> 
+      mutate(
+        ex_driver = "all"
+      )
+  ) |> 
+  filter(
+    iucn_cat != "LC",
+    !(ex_driver %in% c(NA, "other"))
+  ) |> 
+  filter(
+    ex_driver %in% c("all", "hunt_col")
+  ) |> 
+  ggplot(aes(x = centr_dists, fill = ex_driver)) + 
+  geom_density(alpha = 0.4) + 
+  facet_wrap(~ sex)
+
+# Get threat data with PC axes
 colour_space_sppsex <- data.frame(species = sapply(strsplit(rownames(colour_space), split = "-"), "[", 1),
                                   sex = sapply(strsplit(rownames(colour_space), split = "-"), "[", 2), 
                                   colour_space)
-
-# Join threat data to colourspace values
-threat_vals <- threat_matrix |> 
+threat_colour <- threat_matrix |> 
   inner_join(colour_space_sppsex, by = join_by("jetz_species" == "species"))
-# this throws a warning but it's just because we have male and female colourspace values together
+# this throws a warning but it's just because we have male and female data together
 # - it's not a problem
 
 # remove duplicates based on second-order code
-threat_vals <- threat_vals |> 
+threat_colour_clean <- threat_colour |> 
   distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
 
-# convert to long data so I can boxplot with PC facet
-threat_vals_long <- tidyr::pivot_longer(
-  threat_vals,
-  cols = tidyr::starts_with("PC"),
-  names_to = "PC",
-  values_to = "val"
-)
+# Pivot longer, so we can facet by PC axis
+threat_colour_long <- threat_colour_clean |> 
+  tidyr::pivot_longer(
+    cols = starts_with("PC"),
+    names_to = "PC",
+    values_to = "PC_value"
+  ) 
 
-# make boxplot, faceted by sex and PC
-threat_vals_long |> 
-  filter(
-    !is.na(sex),
-    !is.na(ex_driver),
-    #   iucn_cat != "LC",
-    PC %in% axes[2]
+# Density plot of all species (excluding LC) vs species threatened by each threat type,
+# faceted by PC axis (first 7 PCs only)
+threat_colour_long |> 
+  bind_rows(
+    threat_colour_long |> 
+      mutate(
+        ex_driver = "all"
+      )
   ) |> 
-  ggplot(aes(x = ex_driver, y = val, fill = ex_driver)) + 
-  geom_boxplot(outliers = F, notch = T) + 
-  facet_grid(rows = vars(PC), cols = vars(sex))
+  filter(
+    iucn_cat != "LC",
+    !(ex_driver %in% c(NA, "other")),
+    PC %in% paste0("PC", 4)
+  ) |> 
+  mutate(
+    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    sex = factor(sex, levels = c("M", "F"))
+  ) |> 
+  filter(
+    ex_driver %in% c("all", "hunt_col")
+  ) |> 
+  ggplot(aes(x = PC_value, fill = ex_driver)) + 
+  geom_density(alpha = 0.4) + 
+  geom_segment(x = 0, xend = 0, y = 0, yend = 0.04, lwd = 0.3, colour = "grey30") + # Vertical line at 0
+  facet_grid(rows = vars(PC), cols = vars(sex)) + 
+  theme_minimal()
 
-# loop over PC axes of choice and make models
-pc_aov_mods <- vector("list", length(axes))
-names(pc_boxplots) <- axes
-pc_tukey_mods <- vector("list", length(axes))
-names(pc_boxplots) <- axes
-for(axis in axes){
-  
-  dat <- threat_vals[, c("jetz_species", "second_ord_code", "ex_driver", "sex", axis)]
-  colnames(dat) <- c("jetz_species", "second_ord_code", "ex_driver", "sex", "pc_vals")
-  
-    # boxplot
-  bp <- dat |> 
-    filter(
-      !is.na(sex),
-      !is.na(ex_driver)
-      #   iucn_cat != "LC"
+
+# Same plot, but with absolute PC values - this is effectively distance to centroid of each PC
+threat_colour_long |> 
+  bind_rows(
+    threat_colour_long |> 
+      mutate(
+        ex_driver = "all"
+      )
+  ) |> 
+  filter(
+    iucn_cat != "LC",
+    !(ex_driver %in% c(NA, "other")),
+    PC %in% paste0("PC", 3:3)
+  ) |> 
+  mutate(
+    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    sex = factor(sex, levels = c("M", "F"))
+  ) |> 
+  filter(
+    ex_driver %in% c("all", "hunt_col")
+  ) |> 
+  mutate(
+    PC_value = abs(PC_value)
+  ) |> 
+  ggplot(aes(x = PC_value, fill = ex_driver)) + 
+  geom_density(alpha = 0.4) + 
+  geom_segment(x = 0, xend = 0, y = 0, yend = 0.04, lwd = 0.3, colour = "grey30") + # Vertical line at 0
+  facet_grid(rows = vars(PC), cols = vars(sex)) + 
+  theme_minimal()
+
+
+# I can do a Levene's test to test for equality of variances between two distributions - this will
+# tell me if one distribution is more clustered around the mean than another
+# This is useful for the PC axes (e.g. PC1) where it looks visually like the hunting and collection-threatened
+# species are generally more dispersed, rather than being concentrated towards one end of the axes 
+# (so it doesn't look like there's a difference in mean, just variance)
+# Levene's test is robust to non-normal distributions
+pc_stats_df <- threat_colour_clean |> 
+  bind_rows(
+    threat_colour_clean |> 
+      mutate(
+        ex_driver = "all"
+      )
     ) |> 
-    ggplot(aes(x = ex_driver, y = pc_vals, fill = ex_driver)) + 
-    geom_boxplot(outliers = F) + 
-    facet_grid(~ sex)
-  
-  pc_boxplots[[axis]] <- bp 
-  
-} 
+  filter(
+    iucn_cat != "LC",
+    !(ex_driver %in% c(NA, "other"))
+  )
+
+levene_M <- car::leveneTest(PC1 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "M", ])
+levene_F <- car::leveneTest(PC1 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "F", ])
+levene_M
+levene_F
+
+# And we can also run a simple ANOVA to test if there's difference in the means of the two distributions
+aov_m <- aov(PC7 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "M", ])
+aov_f <- aov(PC7 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "F", ])
+summary(aov_m)
+summary(aov_f)
+
+# Loop over the first 7 axes, performing ANOVA and Levene's test each time, for each pairing of 
+# all-specific driver
+threat_types <- c(hab_loss = "hab_loss", hunt_col = "hunt_col", invas_spec = "invas_spec", clim_chan = "clim_chan", pollut = "pollut", acc_mort = "acc_mort")
+pc_res <- vector("list", length = length(threat_types))
+names(pc_res) <- threat_types
+lev_res <- rep(list(pc_res), times = 7)
+str(lev_res)
+names(lev_res) <- paste0("PC", 1:7)
+
+lev_res <- lapply(
+  paste0("PC", 1:7),
+  function(pc_axis){
+    
+    pc_res <- lapply(
+      threat_types,
+      function(threat){
+        
+        form <- formula(get(pc_axis) ~ ex_driver)
+        
+        aov_m <- aov(form, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", threat) & pc_stats_df$sex == "M", ])
+        aov_f <- aov(form, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", threat) & pc_stats_df$sex == "F", ])
+        levene_m <- car::leveneTest(PC1 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "M", ])
+        levene_f <- car::leveneTest(PC1 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "F", ])
+        
+        res <- list(
+          aov_m, aov_f, levene_m, levene_f
+        )
+        names(res) <- c("aov_m", "aov_f", "levene_m", "levene_f")
+        
+        return(res)
+        
+      }
+    )
+    names(pc_res) <- threat_types
+    return(pc_res)
+  }
+)
+names(lev_res) <- paste0("PC", 1:7)
+
+# Can then access the individual PC/threat type results
+# E.g. for PC1, to look at the difference in distributions in species threatened by all threat types
+# vs only species threatened by hunting and collection
+summary(lev_res$PC1$hunt_col$aov_m)
+summary(lev_res$PC1$hunt_col$aov_f)
+lev_res$PC1$hunt_col$levene_m
+lev_res$PC1$hunt_col$levene_f
+# So, we can see that the species which are threatened by hunting and collection tend to 
+# be further out towards the edges of the first PC (as shown by the Levene's test), but not in either 
+# direction in particular (as shown by ANOVA)
+# So we interpret this to mean that hunting and collection disproportionately threatens both light
+# and dark birds
+# for PC3, look at the difference in distributions in species threatened by all threat types
+# vs only species threatened by hunting and collection
+summary(lev_res$PC3$hunt_col$aov_m)
+summary(lev_res$PC3$hunt_col$aov_f)
+lev_res$PC3$hunt_col$levene_m
+lev_res$PC3$hunt_col$levene_f
+# for PC3 (countershading vs reverse countershading), we see that species threatened by hunting and 
+# collection tend to be further from the centroid, and tend to have more positive PC3 values - 
+# meaning that hunting and collection tends to threaten reverse-countershaded species more
+# than countershaded species
