@@ -182,13 +182,13 @@ mod <- MCMCglmm(
   random = ~ us(trait):species, 
   rcov= ~ us(trait):units,
   ginverse = list(species = ainv),
-  nitt=1050, 
-  thin=1, 
-  burnin=50
+  nitt=10500, 
+  thin=10, 
+  burnin=500
   )
 
 # check convergence visually
-plot(mod)
+#plot(mod)
 
 # inspect results
 summary(mod)
@@ -213,7 +213,7 @@ save(
   )
 )
 
-
+start_time <- Sys.time()
 # Set up final model - loop over 10 trees
 for(i in 1:10){
   
@@ -232,9 +232,9 @@ for(i in 1:10){
     random = ~ us(trait):species, 
     rcov= ~ us(trait):units,
     ginverse = list(species = ainv),
-    nitt=1050, # need 10 samples per tree, to fit with the structure we set up
-    thin=100, 
-    burnin=50
+    nitt=10500, # need 10 samples per tree, to fit with the structure we set up
+    thin=1000, 
+    burnin=500
   )
   
   print(i) #print which tree you're on (for your sanity as the loop runs)
@@ -251,7 +251,7 @@ for(i in 1:10){
   start1.l = list(R = mod$VCV[nsamp.l, units_cols], G = list(G1 = mod$VCV[nsamp.l, species_cols])) 
   
   # save (for sanity)
-  if(i > 99){
+  if(i > 9){
     save(
       Final.mod,
       file = here::here(
@@ -261,10 +261,17 @@ for(i in 1:10){
   }
   
 }
+end_time <- Sys.time()
 
-plot(Final.mod)
+#plot(Final.mod)
 summary(Final.mod)
 
+save(
+  Final.mod,
+  file = here::here(
+    "03_output_data", "multiresponse_mod.Rdata"
+  )
+)
 
 # Select only significant threats and rerun
 # Only exp and cli significant
@@ -400,7 +407,7 @@ summary(Final.mod)
 
 
 
-#### Plotting ----
+# Plotting ----
 
 # Based on code from Stewart et al 2025 Nat Ecol Evol - script "figure_4a_multiresponse_posterior_plots.R"
 
@@ -419,11 +426,11 @@ gen_posts = function(run, n_pcs) {
   # we also remove the intercepts (traitPCX) as we don't care about these
   long = posts %>%
     dplyr::select(- intercept_cols) |> 
-    pivot_longer(cols = colnames(posts[(n_pcs + 1):ncol(posts)]))
+    tidyr::pivot_longer(cols = colnames(posts[(n_pcs + 1):ncol(posts)]))
   
   # Get the PC and threat names from the results
-  long$PC = as.factor(gsub("trait", "", as.factor(str_split_i(long$name, ":", 1))))
-  long$threat = as.factor(str_split_i(long$name, ":", 2))
+  long$PC = as.factor(gsub("trait", "", as.factor(stringr::str_split_i(long$name, ":", 1))))
+  long$threat = as.factor(stringr::str_split_i(long$name, ":", 2))
   
   # Order the threat scenarios for plotting purposes
   order = c("hab", "exp", "cli","inv","dis")
@@ -433,7 +440,8 @@ gen_posts = function(run, n_pcs) {
   # haveing high PC1 values. We don't need to do this
   # long[long$PC=="PC1", "value"]=long[long$PC=="PC1", "value"]*(-1)
   
-  # Determine significance - Kerry uses a pMCMC < 0.1 significance level, not sure why not a 0.05
+  # Determine significance - Kerry uses a pMCMC < 0.1 significance level, not sure why not a 0.05, 
+  # maybe because it's two-tailed? Doesn't make any difference to my results in any case
   sig_var = rownames(summary(run)$solutions)[summary(run)$solutions[, "pMCMC"] < 0.1]
   # Create binary flag - 1 if significant, 0 if not
   long$sig=ifelse(long$name %in% sig_var, 1, 0)
@@ -477,17 +485,17 @@ threat_labs <- c(
 # define custom palette - make non-significant results grey
 cols =   c(
     "not_sig" = "grey90", 
-    "inv" = brewer.pal(n=6, "Oranges")[3], 
-    "cli" = brewer.pal(n=6, "Greens")[3], 
-    "exp" = brewer.pal(n=6, "Reds")[3], 
-    "hab" = brewer.pal(n=6, "Purples")[3],
-    "dis" = brewer.pal(n=6, "Blues")[3]
+    "inv" = RColorBrewer::brewer.pal(n=6, "Oranges")[3], 
+    "cli" = RColorBrewer::brewer.pal(n=6, "Greens")[3], 
+    "exp" = RColorBrewer::brewer.pal(n=6, "Reds")[3], 
+    "hab" = RColorBrewer::brewer.pal(n=6, "Purples")[3],
+    "dis" = RColorBrewer::brewer.pal(n=6, "Blues")[3]
     )
 
 
 # create fill variable - this determines which colour each density plot gets
 # first get threat names
-posterior_formatted$other_col = str_split_i(posterior_formatted$name, ":", 2)
+posterior_formatted$other_col = stringr::str_split_i(posterior_formatted$name, ":", 2)
 # if effect is non-significant, make value "not_sig"
 posterior_formatted[posterior_formatted$sig == 0, "other_col"] = "not_sig"
 # order the colour factor to match the 'cols' vector defined above
