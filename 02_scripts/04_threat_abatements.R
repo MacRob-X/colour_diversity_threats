@@ -27,7 +27,7 @@ colour_space <- readRDS(colspace_path)[[space]][["x"]]
 
 # Load raw species extinction matrices (1=extant, 0=extinct) for 100% abatement scope
 extinctions = read.csv(
-  here::here("01_input_data", "all_pamat_all_threats_1000_17122024.csv"), 
+  here::here("01_input_data", "all_pamat_all_threats_1000.csv"), 
   row.names = 1
   ) # 100% scope
 
@@ -126,11 +126,11 @@ centr_dist_sims |>
 
 # Calculate absolute mean distance to centroid loss avoided compared with no abatement scenario
 # positive number means higher mean distance to centroid under specific abatement than no abatement
-centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_abs"] = rep(centr_dist_sims[centr_dist_sims$code == "none", "mean_cd_loss_abs"], times = 6) - centr_dist_sims[centr_dist_sims$code != "none", "mean_cd_loss_abs"]
+centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_abs"] = rep(centr_dist_sims[centr_dist_sims$code == "none", "mean_cd_loss_abs"], times = 7) - centr_dist_sims[centr_dist_sims$code != "none", "mean_cd_loss_abs"]
 
 # Calculate absolute species richness loss AVOIDED compared with no abatement scenario
 # positive number mean higher species richness under specific abatement compared with no abatement
-centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_avoided_abs"] = rep(centr_dist_sims[centr_dist_sims$code == "none", "sr_loss_abs"], times = 6) - centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_abs"]
+centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_avoided_abs"] = rep(centr_dist_sims[centr_dist_sims$code == "none", "sr_loss_abs"], times = 7) - centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_abs"]
 
 # plot absolute centroid distance loss AVOIDED vs absolute species richness loss AVOIDED
 centr_dist_sims |> 
@@ -146,10 +146,10 @@ centr_dist_sims |>
 
 # Now get as percentages for easier comparison
 # THIS IS WHAT WE WILL ACTUALLY USE IN THE MANUSCRIPT
-centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_pc"] <- rep(centr_dist_sims[centr_dist_sims$code == "none", "cd_pc_loss"], times = 6) - centr_dist_sims[centr_dist_sims$code != "none", "cd_pc_loss"]
+centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_pc"] <- rep(centr_dist_sims[centr_dist_sims$code == "none", "cd_pc_loss"], times = 7) - centr_dist_sims[centr_dist_sims$code != "none", "cd_pc_loss"]
 
 # And the same for species richness loss
-centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_avoided_pc"] <- rep(centr_dist_sims[centr_dist_sims$code == "none", "sr_pc_loss"], times = 6) - centr_dist_sims[centr_dist_sims$code != "none", "sr_pc_loss"]
+centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_avoided_pc"] <- rep(centr_dist_sims[centr_dist_sims$code == "none", "sr_pc_loss"], times = 7) - centr_dist_sims[centr_dist_sims$code != "none", "sr_pc_loss"]
 
 # plot percentage centroid distance loss avoided vs percentage species richness loss avoided
 centr_dist_sims |> 
@@ -163,11 +163,37 @@ centr_dist_sims |>
 # hunting and collection avoids disproportionately more loss of colour pattern diversity accounting for
 # decrease in species richness than abatement of other specific threats
 
+
+# FOR DOTTED LINE SHOWING MEAN COLOUR PATTERN DIVERSITY LOSS AVOIDANCE PER SPECIES RICHNESS UNDER FULL ABATEMENT
+
+# Get mean % species loss avoided in full abatement ('all') scenario
+n_sp <- ncol(ext)
+sp_loss_av_all <- centr_dist_sims |> 
+  filter(
+    code == "all"
+  ) |> 
+  pull(
+    sr_loss_avoided_pc
+  ) |> 
+  mean()
+# Get mean % colour pattern diversity loss avoided in full abatement ('all') scenario
+cd_loss_av_all <- centr_dist_sims |> 
+  filter(
+    code == "all"
+  ) |> 
+  pull(
+    cd_loss_avoided_pc
+  ) |> 
+  mean()
+# Use to calculate gradient of line
+all_ab_grad <- cd_loss_av_all / sp_loss_av_all
+
 # Now plot the same (percentage centroid distance loss avoided vs percentage species richness loss avoided)
 # but with means instead of full simulation distributions 
 centr_dist_sims |> 
   filter(
-    code != "none"
+    code != "none",
+  #  code != "all"
   ) |> 
   group_by(code) |> 
   summarise(
@@ -177,12 +203,14 @@ centr_dist_sims |>
     sd_sr_loss_avoided = sd(sr_loss_avoided_pc)
   ) |> 
   ggplot(aes(x = mean_sr_loss_avoided, y = mean_cd_loss_avoided, fill = code)) + 
-  geom_errorbar(aes(xmin = mean_sr_loss_avoided - 0.5*sd_sr_loss_avoided, xmax = mean_sr_loss_avoided + 0.5*sd_sr_loss_avoided), colour = "black", width = 0.01) + 
-  geom_errorbar(aes(ymin = mean_cd_loss_avoided - 0.5*sd_cd_loss_avoided, ymax = mean_cd_loss_avoided + 0.5*sd_cd_loss_avoided), colour = "black") + 
+  geom_errorbar(aes(xmin = mean_sr_loss_avoided - 0.5*sd_sr_loss_avoided, xmax = mean_sr_loss_avoided + 0.5*sd_sr_loss_avoided), colour = "black", width = 0.005) + 
+  geom_errorbar(aes(ymin = mean_cd_loss_avoided - 0.5*sd_cd_loss_avoided, ymax = mean_cd_loss_avoided + 0.5*sd_cd_loss_avoided), colour = "black", width = 0.02) + 
   geom_point(shape = 21, size = 5) + 
+  #### DIAGONAL LINE - must go through intercept
+   geom_abline(intercept = 0, slope = all_ab_grad, lty = 2) +
   xlab("Avoided species richness loss (%)") + ylab("Avoided colour pattern diversity loss (%)") + 
   labs(fill = "Driver-specific abatement") + 
-  scale_fill_discrete(labels = c("Climate", "Disturbance", "Hunting", "Habitat", "Invasive", "Pollution")) + 
+  scale_fill_discrete(labels = c("All", "Climate", "Disturbance", "Hunting", "Habitat", "Invasive", "Pollution")) + 
 #  coord_fixed() + # to fix the aspect ratio
   theme_minimal() + 
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
@@ -210,6 +238,17 @@ centr_dist_sims |>
 # the species which are both endangered and missing from the colour dataset are threatened by habitat loss
 # Again, shouldn't be a problem as I'm only interested in the ratio of colour diversity loss to 
 # species richness loss
+
+
+
+
+
+
+
+
+
+
+
 
 # THE JUICE
 # Calculate colour pattern diversity loss AVOIDED under each abatement scenario (excluding the 'full' 
