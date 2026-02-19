@@ -326,7 +326,7 @@ ggpubr::annotate_figure(
 )
 
 
-# STATISTICS ----
+# Statistics ----
 
 # Perform a Cramer-von Mises test to check for difference in distribution of PC1 values between 
 # species threatened by hunting and collection and species not threatened by hunting and collection
@@ -537,10 +537,10 @@ plot_cvm_distrib <- function(cvm_res, bins = 30){
 # could parallelise this but it only takes ~30s for 7 axes
 # define threat types and focal PCs first 
 threat_types <- c(hab_loss = "hab_loss", hunt_col = "hunt_col", invas_spec = "invas_spec", clim_chan = "clim_chan", pollut = "pollut", acc_mort = "acc_mort")
-pcs <- paste0("PC", 1:3)
+pcs <- paste0("PC", 1:7)
 
 # Run across PCs/extinction drivers
-cvm_res <- pbapply::pblapply(
+pc_ex_drive_res <- pbapply::pblapply(
   
   threat_types,
   
@@ -565,18 +565,268 @@ cvm_res <- pbapply::pblapply(
   }
   
 )
-cvm_res <- do.call(rbind, cvm_res)
+pc_ex_drive_res <- do.call(rbind, pc_ex_drive_res)
 # Bonferroni correction for p-values
-cvm_res$p_adjusted <- p.adjust(cvm_res$p_value, method = "bonferroni")
+pc_ex_drive_res$p_adjusted <- p.adjust(pc_ex_drive_res$p_value, method = "bonferroni")
 
 # inspect results
-cvm_res |> 
+pc_ex_drive_res |> 
   # filter(
   #   abs(ses) > 1.96
   # ) |> 
   arrange(
     p_adjusted
   )
+
+
+# Keep only the axes for which |SES| > 1.96
+sig_pc_exdrive <- pc_ex_drive_res |> 
+  filter(
+    abs(ses) > 1.96
+  )
+sig_combos <- sig_pc_exdrive |> 
+  select(
+    PC, extinction_driver
+  ) |> 
+  mutate(
+    combo = paste(PC, extinction_driver, sep = "_")
+  )
+
+# Test for SPECIFIC distributional differences in each of these axis/threat combinations
+# --> Mean shift (via lm/ANOVA)
+# --> Shift in variance (via Levene's test)
+
+# Mean shift and variance inequality
+# I want to run a t-test  on each significant PC/extinction driver combination, comparing the 
+# distribution of the significant combination with that of the distribution of the same PC values of
+# other threatened species
+
+ttest_res <- pbapply::pblapply(
+  1:nrow(sig_combos),
+  function(combo_number){
+    
+    # define focal combination
+    focal_combo <- sig_combos[combo_number, ]
+    
+    focal_distrib <- threat_colour_long |> 
+      filter(
+        iucn_cat != "LC",
+      ) |> 
+      filter(
+        PC == focal_combo$PC,
+        ex_driver == focal_combo$extinction_driver
+      )
+    non_focal_distrib <- threat_colour_long |> 
+      filter(
+        iucn_cat != "LC"
+      ) |> 
+      filter(
+        PC == focal_combo$PC,
+        ex_driver != focal_combo$extinction_driver
+      ) |> 
+      mutate(
+        ex_driver = "non_focal"
+      )
+    mod_dat <- focal_distrib |> 
+      bind_rows(
+        non_focal_distrib
+      ) |> 
+      select(
+        PC, ex_driver, PC_value
+      )
+    
+    # calculate observed t statistic (for mean shift) and Levene's test (for variance inequality)
+    obs_t_stat <- t.test(PC_value ~ ex_driver, data = mod_dat)$statistic
+    obs_f_val <- suppressWarnings(car::leveneTest(PC_value ~ ex_driver, data = mod_dat)["group", "F value"])
+    
+    null_distribs <- lapply(1:1000, 
+                            function(i){
+                              sample_rows <- sample(
+                                1:nrow(mod_dat),
+                                size = length(focal_distrib$PC_value),
+                                replace = FALSE
+                              )
+                              sample_distrib <- mod_dat[, c("ex_driver", "PC_value")]
+                              sample_distrib[sample_rows, "ex_driver"] <- focal_combo$extinction_driver
+                              sample_distrib[-sample_rows, "ex_driver"] <- "non_focal"
+                              return(sample_distrib)
+                            }
+    )
+    
+    # Get null distribution of t statistics
+    null_t_stats <- unlist(
+      lapply(
+        null_distribs,
+        function(sample){
+          null_t_stat <- t.test(PC_value ~ ex_driver, data = sample)$statistic
+          return(null_t_stat)
+        }
+      )
+    )
+    # Calculate SES for t statistics
+    null_t_mean <- mean(null_t_stats)
+    null_t_sd <- sd(null_t_stats)
+    mean_shift_ses <- (obs_t_stat - null_t_mean) / null_t_sd
+    
+    # Get null distribution of F values
+    null_f_vals <- unlist(
+      lapply(
+        null_distribs,
+        function(sample){
+          null_f_val <- suppressWarnings(car::leveneTest(PC_value ~ ex_driver, data = sample)["group", "F value"])
+          return(null_f_val)
+        }
+      )
+    )
+    # Calculate SES for F values
+    null_f_mean <- mean(null_f_vals)
+    null_f_sd <- sd(null_f_vals)
+    var_inequal_ses <- (obs_f_val - null_f_mean) / null_f_sd
+    
+    res <- data.frame(PC = focal_combo$PC, ex_driver = focal_combo$extinction_driver, mean_shift_obs = obs_t_stat, mean_shift_null_mean = null_t_mean, mean_shift_null_sd = null_t_sd, mean_shift_ses = mean_shift_ses, var_inequal_obs = obs_f_val, var_inequal_null_mean = null_f_mean, var_inequal_sd = null_f_sd, var_inequal_ses = var_inequal_ses)
+    
+    return(res)
+    
+  }
+)
+results <- do.call(rbind, ttest_res)
+
+# plot significant meanshift drivers
+results |> 
+  filter(
+    abs(mean_shift_ses) > 1.96
+  ) |> 
+  ggplot(aes(x = ex_driver, y = mean_shift_ses, colour = ex_driver)) + 
+  geom_point() + 
+  facet_wrap(~ PC)
+
+results |> 
+  filter(
+    abs(var_inequal_ses) > 1.96
+  ) |> 
+  ggplot(aes(x = ex_driver, y = var_inequal_ses, colour = ex_driver)) + 
+  geom_point() + 
+  facet_wrap(~ PC)
+
+# check if inequality of variance SES is associated with mean shift SES
+mod <- lm(abs(mean_shift_ses) ~ abs(var_inequal_ses), data = results)
+summary(mod)
+# no, not associated
+
+# Same, but using Levene's test for equality of variances between two distributions - this will
+# tell me if one distribution is more clustered around the mean than another
+
+
+focal_distrib <- threat_colour_long |> 
+  filter(
+    iucn_cat != "LC",
+  ) |> 
+  filter(
+    PC == focal_combo$PC,
+    ex_driver == focal_combo$extinction_driver
+  )
+non_focal_distrib <- threat_colour_long |> 
+  filter(
+    iucn_cat != "LC"
+  ) |> 
+  filter(
+    PC == focal_combo$PC,
+    ex_driver != focal_combo$extinction_driver
+  ) |> 
+  mutate(
+    ex_driver = "non_focal"
+  )
+mod_dat <- focal_distrib |> 
+  bind_rows(
+    non_focal_distrib
+  ) |> 
+  select(
+    PC, ex_driver, PC_value
+  )
+
+obs_t_stat <- t.test(PC_value ~ ex_driver, data = mod_dat)$statistic
+null_distribs <- lapply(1:1000, 
+                        function(i){
+                          sample_rows <- sample(
+                            1:nrow(mod_dat),
+                            size = length(focal_distrib$PC_value),
+                            replace = FALSE
+                          )
+                          sample_distrib <- mod_dat[, c("ex_driver", "PC_value")]
+                          sample_distrib[sample_rows, "ex_driver"] <- focal_combo$extinction_driver
+                          sample_distrib[-sample_rows, "ex_driver"] <- "non_focal"
+                          return(sample_distrib)
+                        }
+)
+null_t_stats <- unlist(
+  lapply(
+    null_distribs,
+    function(sample){
+      null_t_stat <- t.test(PC_value ~ ex_driver, data = sample)$statistic
+      return(null_t_stat)
+    }
+  )
+)
+null_mean <- mean(null_t_stats)
+null_sd <- sd(null_t_stats)
+ses <- (obs_t_stat - null_mean) / null_sd
+
+t_mod <- t.test(PC_value ~ ex_driver, data = mod_dat)
+t_mod
+summary(t_mod)
+
+threat_col_sig_combos <- threat_colour_long |> 
+  filter(
+    iucn_cat != "LC",
+  ) |> 
+  mutate(
+    combo = paste(PC, ex_driver, sep = "_")
+  ) |> 
+  filter(
+    combo %in% sig_combos$combo
+  )
+
+library(lme4)
+mean_shift_mod <- lme4::glmer(PC_value ~ 1 + ex_driver + (1 | PC), data = threat_col_sig_combos)
+
+mean_shift_mod
+summary(mean_shift_mod)
+
+threat_col_sig_combos |> 
+  ggplot(aes(x = ex_driver, y = PC_value, fill = ex_driver)) + 
+  geom_boxplot() + 
+  stat_smooth(method = "lm", fullrange = T) + 
+  facet_wrap(~ PC)
+
+plot(mean_shift_mod)
+
+mean_shift_mods <- pbapply::pblapply(
+  sig_combos$combo,
+  function(var_combo){
+    
+    combos <- sig_combos |> 
+      combo = var_combo
+    
+    focal_distrib <- threat_col_sig_combos |> 
+      filter(
+        combo == var_combo,
+      ) |> 
+      pull(
+        PC_value
+      )
+    non_focal_distrib <- threat_col_sig_combos |> 
+      filter(
+        pc == unique(combos$PC),
+        ex_driver 
+      )
+    
+    mod <- lm()
+    
+  }
+)
+
+
+
 
 
 ### ALTERNATIVE HIERARCHICAL MODELLING APPROACH ----
