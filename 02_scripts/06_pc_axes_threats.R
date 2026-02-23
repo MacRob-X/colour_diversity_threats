@@ -362,14 +362,20 @@ plot(cvm)
 # Note that I think this is essentially what twosamples::cvm_test does under the hood anyway
 # first calculate CVM test statistic for the observed distribution
 cvm_obs <- twosamples::cvm_stat(
-  a = hc_distrib,
-  b = non_hc_distrib,
+  a = focal_distrib,
+  b = non_focal_distrib,
 )
+all_distrib <- threat_colour_long |> 
+  filter(
+    iucn_cat != "LC",
+    PC == pc_axis
+  ) |> 
+  pull(PC_value)
 random_samples <- lapply(1:2000, 
                          function(i){
                            sample(
-                             non_hc_distrib,
-                             size = length(hc_distrib),
+                             all_distrib,
+                             size = length(focal_distrib),
                              replace = FALSE
                            )
                          }
@@ -380,7 +386,7 @@ cvm_stats_random <- unlist(
     function(sample){
       cvm <- twosamples::cvm_stat(
         a = sample,
-        b = non_hc_distrib,
+        b = non_focal_distrib,
       )
       return(cvm)
     }
@@ -458,6 +464,11 @@ test_pc_threat <- function(pc_axis, threat_colour_long, threat, n = 1000, seed =
   }
   assertthat::assert_that(distrib_match(focal_distrib, non_focal_distrib, all_distrib))
   
+  # get lengths of focal and non-focal distributions
+  n_focal <- length(focal_distrib)
+  n_non_focal <- length(non_focal_distrib)
+  n_all <- n_focal + n_non_focal
+  
   # calculate observed CVM value
   test_stat_obs <- stat_func(
       a = focal_distrib,
@@ -469,30 +480,29 @@ test_pc_threat <- function(pc_axis, threat_colour_long, threat, n = 1000, seed =
     set.seed(seed)
   }
   
+
   # Generate set of null distribution from non-focal-
-  random_samples <- lapply(1:n, 
-                           function(i){
-                             sample(
-                               all_distrib,
-                               size = length(focal_distrib),
-                               replace = TRUE
-                             )
-                           }
-  )
-  
-  # Calculate CVM for each random distribution, vs the original non-focal-threat distribution
   null_test_stats <- unlist(
     lapply(
-      random_samples,
-      function(sample){
-        cvm <- stat_func(
-          a = sample,
-          b = non_focal_distrib,
+      1:n, 
+      function(i){
+        all_sample <- sample(
+          all_distrib,
+          size = n_all,
+          replace = FALSE
+          )
+        focal_sample <- all_sample[1:n_focal]
+        non_focal_sample <- all_sample[(n_focal + 1):n_all]
+        
+        # Calculate test statistic for each random distribution, vs the original non-focal-threat distribution
+        null_test_stat <- stat_func(
+          a = focal_sample,
+          b = non_focal_sample,
         )
-        return(cvm)
-      }
+        return(null_test_stat)
+        }
+      )
     )
-  )
   
   # Calculate SES (obs - mean(null)) / sd(null)
   # SES > 1.96 indicates deviation from difference between distributions expected by chance
@@ -554,7 +564,7 @@ pc_ex_drive_res <- pbapply::pblapply(
       n = 1000,
       seed = 42,
       return_distrib = FALSE,
-      stat_test = "dts"
+      stat_test = "wass"
     )
     names(cvm) <- pcs
     cvm <- data.table::rbindlist(cvm, idcol = "PC")
@@ -568,6 +578,85 @@ pc_ex_drive_res <- pbapply::pblapply(
 pc_ex_drive_res <- do.call(rbind, pc_ex_drive_res)
 # Bonferroni correction for p-values
 pc_ex_drive_res$p_adjusted <- p.adjust(pc_ex_drive_res$p_value, method = "bonferroni")
+
+# compare to results just from using twosamples::wass_test (which uses essentially the
+# same permutation test to determine a count-based p-value)
+res_ts <- pbapply::pblapply(
+  
+  threat_types,
+  
+  function(threat_type){
+    
+    pc_stats <- pbapply::pblapply(
+      pcs,
+      function(pc_axis){
+        
+        focal_distrib <- threat_colour_long |> 
+          filter(
+            iucn_cat != "LC", 
+            PC == pc_axis, 
+            ex_driver == threat_type
+          ) |> 
+          pull(PC_value)
+        non_focal_distrib <- threat_colour_long |> 
+          filter(
+            iucn_cat != "LC", 
+            PC == pc_axis, 
+            ex_driver != threat_type
+          ) |> 
+          pull(PC_value)
+        
+        test_stat <- twosamples::wass_test(
+          focal_distrib,
+          non_focal_distrib,
+          nboots = 1000,
+          keep.boots = F
+        )
+        test_stat <- as.data.frame(t(as.data.frame(test_stat)))
+        test_stat$PC <- pc_axis
+        return(test_stat)
+        
+      }
+        )
+    
+    threat_res <- do.call(rbind, pc_stats)
+  }
+  
+)
+res_ts <- data.table::rbindlist(res_ts, idcol = "extinction_driver")
+colnames(res_ts) <- c("extinction_driver", "test_stat", "p_value", "PC")
+res_ts <- res_ts |> 
+  select(PC, extinction_driver, test_stat, p_value)
+
+ordered_ts_res <- res_ts |> 
+  arrange(p_value)
+ordered_wass_res <- wass_res_new |> 
+  arrange(p_value)
+identical(ordered_ts_res[, c("PC", "extinction_driver")], ordered_wass_res[, c("PC", "extinction_driver")])
+full_res <- ordered_ts_res |> 
+  full_join(
+    ordered_wass_res, by = c("PC", "extinction_driver")
+  )
+plot(p_value.y ~ p_value.x, data = full_res)
+mod <- lm(p_value.y ~ p_value.x, data = full_res)
+mod
+summary(mod)
+# essentially the same p-value order - I'm guessing the tiny amount of variation is because of
+# stochasticity in the permutation testing
+# check that all significant results are significant under both methods, and same for non-significant
+# results
+identical(full_res[full_res$p_value.x < 0.05, ], full_res[full_res$p_value.y < 0.05, ])
+identical(full_res[full_res$p_value.x > 0.05, ], full_res[full_res$p_value.y > 0.05, ])
+
+# same for adjusted p-values
+full_res <- full_res |> 
+  mutate(
+    p_value.x_adj = p.adjust(p_value.x),
+    p_value.y_adj = p.adjust(p_value.y)
+  )
+identical(full_res[full_res$p_value.x_adj < 0.05, ], full_res[full_res$p_value.y_adj < 0.05, ])
+identical(full_res[full_res$p_value.x_adj > 0.05, ], full_res[full_res$p_value.y_adj > 0.05, ])
+
 
 # inspect results
 pc_ex_drive_res |> 
