@@ -187,10 +187,19 @@ cd_loss_av_all <- centr_dist_sims |>
   mean()
 # Use to calculate gradient of line
 all_ab_grad <- cd_loss_av_all / sp_loss_av_all
+# Set intercept to 0
+all_ab_int <- 0
+
+
+# ALTERNATIVE APPROACH TO GET DOTTED LINE
+# Get gradient and intercept of line from all 'all' simulations
+all_ab_mod <- lm(cd_loss_avoided_pc ~ sr_loss_avoided_pc, data = centr_dist_sims)
+all_ab_grad <- all_ab_mod$coefficients[[2]]
+all_ab_int <- all_ab_mod$coefficients[[1]]
 
 # Now plot the same (percentage centroid distance loss avoided vs percentage species richness loss avoided)
 # but with means instead of full simulation distributions 
-centr_dist_sims |> 
+p <- centr_dist_sims |> 
   filter(
     code != "none",
   #  code != "all"
@@ -206,14 +215,16 @@ centr_dist_sims |>
   geom_errorbar(aes(xmin = mean_sr_loss_avoided - 0.5*sd_sr_loss_avoided, xmax = mean_sr_loss_avoided + 0.5*sd_sr_loss_avoided), colour = "black", width = 0.005) + 
   geom_errorbar(aes(ymin = mean_cd_loss_avoided - 0.5*sd_cd_loss_avoided, ymax = mean_cd_loss_avoided + 0.5*sd_cd_loss_avoided), colour = "black", width = 0.02) + 
   geom_point(shape = 21, size = 5) + 
-  #### DIAGONAL LINE - must go through intercept
+  #### DIAGONAL LINE 
    geom_abline(intercept = 0, slope = all_ab_grad, lty = 2) +
   xlab("Avoided species richness loss (%)") + ylab("Avoided colour pattern diversity loss (%)") + 
   labs(fill = "Driver-specific abatement") + 
-  scale_fill_discrete(labels = c("All", "Climate", "Disturbance", "Hunting", "Habitat", "Invasive", "Pollution")) + 
+  # scale_fill_discrete(labels = c("All", "Climate", "Disturbance", "Hunting", "Habitat", "Invasive", "Pollution")) + 
+  scale_fill_discrete(labels = c("All drivers", "Climate change and severe weather", "Accidental mortality", "Hunting and collection","Habitat loss and degradation", "Invasive species and disease", "Pollution")) + 
 #  coord_fixed() + # to fix the aspect ratio
   theme_minimal() + 
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+p
 # 2025-01-12
 # It's strange that my percentage avoided species loss figure fro habitat loss abatement
 # is about half the figure in Kerry's paper
@@ -238,6 +249,17 @@ centr_dist_sims |>
 # the species which are both endangered and missing from the colour dataset are threatened by habitat loss
 # Again, shouldn't be a problem as I'm only interested in the ratio of colour diversity loss to 
 # species richness loss
+
+
+# save as SVG
+ggsave(
+  here::here(
+    "04_output_plots", "02_driver_specific_abatements", "avoided_centroid_dist_sr_loss.svg"
+  ),
+  plot = p,
+  device = "svg", 
+  width = 6, height = 4
+)
 
 
 

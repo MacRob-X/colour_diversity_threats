@@ -151,16 +151,29 @@ threat_centr <- threat_matrix |>
 threat_centr_clean <- threat_centr |> 
   distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
 
-# boxplot of centroid distances by threat type - exclude LC species
-threat_centr_clean |> 
+# boxplot of centroid distances by threat type - exclude LC species and 'Other' threats
+bp <- threat_centr_clean |> 
   filter(
     !is.na(sex),
-    !is.na(ex_driver)
-    #   iucn_cat != "LC"
+    !is.na(ex_driver),
+    iucn_cat != "LC",
+    ex_driver != "other"
   ) |> 
   ggplot(aes(x = ex_driver, y = centr_dists, fill = ex_driver)) + 
   geom_boxplot(outliers = F) + 
-  facet_grid(~ sex)
+  facet_grid(~ sex) + 
+  labs(fill = "Drivers of extinction") + 
+  ylab("Distance to centroid") + xlab("Drivers of extinction") + 
+  scale_fill_discrete(labels = c("Accidental mortality", "Climate change and severe weather", "Habitat loss and degradation", "Hunting and collection", "Invasive species and disease", "Pollution")) +
+  theme(axis.text.x = element_text(angle = 45,  hjust=1))
+
+ggsave(
+  here::here(
+    "04_output_plots", "01_colour_threats", "centroid_dist_extinction_drivers_boxplot.svg"
+  ),
+  plot = bp,
+  device = "svg",
+)
 
 # ANOVA to check if mean centroid distances of each extinction driver are different
 an_m <- aov(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "M", ])
@@ -180,8 +193,60 @@ tukey_centr_dists_f <- TukeyHSD(av_f)
 # Individual PC axes ----
 
 # Plot distribution of centroid distances for each threat type
-
+threat_types <- c("hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")
+names(threat_types) <- c("Habitat", "Hunting", "Climate", "Invasive", "Disturbance", "Pollution")
+cols <- RColorBrewer::brewer.pal(7, "Set1")
+names(cols) <- c("all", threat_types)
 # Density plot of all species' centroid distance (excluding LC) vs species threatened by each threat type
+p_cd_density <- lapply(
+  threat_types, 
+  function(threat_type){
+  
+    p <- threat_centr_clean |> 
+      bind_rows(
+        threat_centr_clean |> 
+          mutate(
+            ex_driver = "all"
+          )
+      ) |> 
+      filter(
+        iucn_cat != "LC",
+        !(ex_driver %in% c(NA, "other"))
+      ) |> 
+      filter(
+        ex_driver %in% c("all", threat_type)
+      ) |> 
+      mutate(
+        ex_driver = factor(ex_driver, levels = c("all", threat_types)),
+        sex = factor(sex, levels = c("M", "F"))
+      ) |> 
+      ggplot(aes(x = centr_dists, fill = ex_driver)) + 
+      geom_density(alpha = 0.4) +
+      scale_fill_discrete(name = "Threats", labels = c("All threats", "Specific threat")) +
+  #    ylab(paste0("Density (", names(threat_types)[threat_types == threat_type], ")")) + 
+  #    scale_fill_manual(values = cols)
+      facet_wrap(~ sex) + 
+      theme_minimal() +
+      labs(title = names(threat_types)[threat_types == threat_type]) + 
+      theme(
+  #      legend.position = "none",
+        plot.title = element_text(size = 10, vjust = -4, hjust = -0.1),
+        axis.title.y = element_blank(),
+        axis.title.x = element_blank()
+        )
+      
+    return(p)
+    
+  }
+)
+p_cd_all_threats <- ggpubr::ggarrange(plotlist = p_cd_density, common.legend = TRUE, ncol = 2, nrow = 3)
+ggpubr::annotate_figure(
+  p_cd_all_threats,
+  bottom = ggpubr::text_grob("Distance to centroid"),
+  left = ggpubr::text_grob("Density", rot = 90)
+)
+
+# To examine a single threat type vs all threat types
 threat_centr_clean |> 
   bind_rows(
     threat_centr_clean |> 
@@ -213,6 +278,30 @@ threat_colour <- threat_matrix |>
 threat_colour_clean <- threat_colour |> 
   distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
 
+# boxplot of PC values by threat type - exclude LC species
+# Compare to all threatened species
+threat_colour_long |> 
+  bind_rows(
+    threat_colour_long |> 
+      mutate(
+        ex_driver = "all"
+      )
+  ) |> 
+  filter(
+    iucn_cat != "LC",
+    !(ex_driver %in% c(NA, "other")),
+    PC %in% paste0("PC", 1)
+  ) |> 
+  mutate(
+    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    sex = factor(sex, levels = c("M", "F"))
+  ) |> 
+  ggplot(aes(x = ex_driver, y = PC_value, fill = ex_driver)) + 
+  geom_boxplot(outliers = F) + 
+  facet_grid(~ sex)
+
+
+
 # Pivot longer, so we can facet by PC axis
 threat_colour_long <- threat_colour_clean |> 
   tidyr::pivot_longer(
@@ -233,7 +322,7 @@ threat_colour_long |>
   filter(
     iucn_cat != "LC",
     !(ex_driver %in% c(NA, "other")),
-    PC %in% paste0("PC", 4)
+    PC %in% paste0("PC", 1)
   ) |> 
   mutate(
     ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
@@ -247,6 +336,60 @@ threat_colour_long |>
   geom_segment(x = 0, xend = 0, y = 0, yend = 0.04, lwd = 0.3, colour = "grey30") + # Vertical line at 0
   facet_grid(rows = vars(PC), cols = vars(sex)) + 
   theme_minimal()
+
+# function to do the above
+plot_pc_distrib <- function(pc_axis, threat_type, long_data, absolute = FALSE) {
+  
+  p <- long_data |> 
+    bind_rows(
+      long_data |> 
+        mutate(
+          ex_driver = "all"
+        )
+    ) |> 
+    filter(
+      iucn_cat != "LC",
+      !(ex_driver %in% c(NA, "other")),
+      PC == pc_axis
+    ) |> 
+    mutate(
+      ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+      sex = factor(sex, levels = c("M", "F"))
+    ) |> 
+    filter(
+      ex_driver %in% c("all", threat_type)
+    ) |> 
+    ggplot(aes(x = PC_value, fill = ex_driver)) + 
+    geom_density(alpha = 0.4) + 
+    scale_fill_discrete(name = "Threats", labels = c("All threats", "Specific threat")) + 
+    labs(title = names(threat_types)[threat_types == threat_type]) + 
+    geom_segment(x = 0, xend = 0, y = 0, yend = 0.04, lwd = 0.3, colour = "grey30") + # Vertical line at 0
+    facet_grid(cols = vars(sex)) + 
+    theme_minimal() + 
+    theme(
+      #      legend.position = "none",
+      plot.title = element_text(size = 10, vjust = -4, hjust = -0.1),
+      axis.title.y = element_blank(),
+      axis.title.x = element_blank()
+    )
+  
+  return(p)
+}
+
+pc_axis <- "PC8"
+pc_plots <- lapply(
+  threat_types,
+  plot_pc_distrib,
+  pc_axis = pc_axis,
+  long_data = threat_colour_long,
+  absolute = FALSE
+)
+p_pc1_allthreats <- ggpubr::ggarrange(plotlist = pc_plots, common.legend = TRUE, ncol = 2, nrow = 3)
+ggpubr::annotate_figure(
+  p_pc1_allthreats,
+  bottom = ggpubr::text_grob(pc_axis),
+  left = ggpubr::text_grob("Density", rot = 90)
+)
 
 
 # Same plot, but with absolute PC values - this is effectively distance to centroid of each PC
@@ -278,6 +421,9 @@ threat_colour_long |>
   facet_grid(rows = vars(PC), cols = vars(sex)) + 
   theme_minimal()
 
+# Statistical tests of distributional differences ----
+
+## Levene's Test ----
 
 # I can do a Levene's test to test for equality of variances between two distributions - this will
 # tell me if one distribution is more clustered around the mean than another
@@ -297,14 +443,34 @@ pc_stats_df <- threat_colour_clean |>
     !(ex_driver %in% c(NA, "other"))
   )
 
-levene_M <- car::leveneTest(PC1 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "M", ])
-levene_F <- car::leveneTest(PC1 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "F", ])
+# first manually check the standard deviations - this will give some indication of the variance in
+# each group. We'll just look at hunting and collection for now
+# all threats
+sd(pc_stats_df[pc_stats_df$ex_driver == "all" & pc_stats_df$sex == "M", "PC1"])
+# hunting
+sd(pc_stats_df[pc_stats_df$ex_driver == "hunt_col" & pc_stats_df$sex == "M", "PC1"])
+# The species threatened by hunting and collection have greater standard deviation, as we
+# guessed from the density plots - but is is statistically significant?
+
+# Perform a Levene's test to check homogeneity of variance
+# first make a wrapper function to make the code tidier
+levene_threats <- function(pc_axis, threat_1, threat_2, sex, data){
+  
+  form <- formula(get(pc_axis) ~ ex_driver)
+  
+  return(
+    car::leveneTest(form, data = data[data$ex_driver %in% c(threat_1, threat_2) & data$sex == sex, ])
+  )
+  
+}
+levene_M <- levene_threats("PC1", threat_1 = "all", threat_2 = "hunt_col", sex = "M", data = pc_stats_df)
+levene_F <- levene_threats("PC1", threat_1 = "all", threat_2 = "hunt_col", sex = "F", data = pc_stats_df)
 levene_M
 levene_F
 
 # And we can also run a simple ANOVA to test if there's difference in the means of the two distributions
-aov_m <- aov(PC7 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "M", ])
-aov_f <- aov(PC7 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "F", ])
+aov_m <- aov(PC1 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "M", ])
+aov_f <- aov(PC1 ~ ex_driver, data = pc_stats_df[pc_stats_df$ex_driver %in% c("all", "hunt_col") & pc_stats_df$sex == "F", ])
 summary(aov_m)
 summary(aov_f)
 
@@ -369,3 +535,17 @@ lev_res$PC3$hunt_col$levene_f
 # collection tend to be further from the centroid, and tend to have more positive PC3 values - 
 # meaning that hunting and collection tends to threaten reverse-countershaded species more
 # than countershaded species
+
+# So, I need to use these results to inform whether I examine raw or absolute PC values 
+# (absolute is the same as distance to PC centroid)
+# Actually, comparing the individual PC density plots with the multiresponse MCMCglmm model plots
+# is quite informative - we can see that even though the density plots and ANOVA results show 
+# that the mean isn't shifted, the MCMCglmm results show that hunting and collection does
+# threaten darker birds more than light birds. And actually if you examine the distributions
+# closely you can see that it is skewed in that direction, even though the means are the same
+# Need to delve into this further next week
+
+# Isuspect there's some way I could use the area of non-overlap of all driver/specific driver distributions
+# on each side of the centroid to determine whether the distributions differ significantly and in what
+# direction - would have to quantify how much non-overlap you'd expect by random chance, and how much
+# variation about the zero line you'd expect by random chance 

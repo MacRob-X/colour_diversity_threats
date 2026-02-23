@@ -367,7 +367,7 @@ library(ggplot2)
 
 # load threat matrix
 cutoff_year <- 2023
-filename <- paste("iucn_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
+filename <- paste("jetz_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
 threat_matrix <- read.csv(
   here::here(
     "03_output_data", filename
@@ -375,7 +375,7 @@ threat_matrix <- read.csv(
 )
 
 # load colour pattern space (created in Chapter 1 - patch-pipeline)
-colspace_path <- "G:/My Drive/patch-pipeline/2_Patches/3_OutputData/Neognaths/2_PCA_ColourPattern_spaces/1_Raw_PCA/Neognaths.matchedsex.patches.250716.PCAcolspaces.rds"
+colspace_path <- "G:/My Drive/patch-pipeline/2_Patches/3_OutputData/Passeriformes/2_PCA_ColourPattern_spaces/1_Raw_PCA/Passeriformes.matchedsex.patches.250716.PCAcolspaces.rds"
 colour_space <- readRDS(colspace_path)[["lab"]][["x"]]
 
 # add second-order threat codes
@@ -483,11 +483,13 @@ centr_dists <- data.frame(
 
 # add distance to centroid onto threat matrix
 threat_centr <- threat_matrix |> 
-  inner_join(centr_dists, by = join_by("binomial_name" == "species"))
+  inner_join(centr_dists, by = join_by("jetz_species" == "species"))
+# this throws a warning but it's just because we have male and female centroid distance data together
+# - it's not a problem
 
 # remove duplicates based on second-order code
 threat_centr_clean <- threat_centr |> 
-  distinct(second_ord_code, binomial_name, sex, .keep_all = TRUE)
+  distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
 
 # boxplot of centroid distances by threat type - exclude LC species
 threat_centr_clean |> 
@@ -497,7 +499,7 @@ threat_centr_clean |>
  #   iucn_cat != "LC"
   ) |> 
   ggplot(aes(x = ex_driver, y = centr_dists, fill = ex_driver)) + 
-  geom_boxplot() + 
+  geom_boxplot(outliers = F) + 
   facet_grid(~ sex)
 
 # ANOVA to check if mean centroid distances of each extinction driver are different
