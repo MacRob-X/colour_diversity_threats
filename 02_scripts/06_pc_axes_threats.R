@@ -9,6 +9,13 @@ library(dplyr)
 library(ggplot2)
 library(ggridges)
 
+# Load custom functions ----
+source(
+  here::here(
+    "02_scripts", "R", "06_pc_axes_threat_functions.R"
+  )
+)
+
 ## EDITABLE CODE ##
 # Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
 latest <- TRUE
@@ -34,6 +41,10 @@ threat_matrix <- read.csv(
 # load colour pattern space (created in Chapter 1 - patch-pipeline)
 colspace_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/1_Raw_PCA/", clade, ".matchedsex.patches.250716.PCAcolspaces.rds")
 colour_space <- readRDS(colspace_path)[["lab"]][["x"]]
+
+# load colour pattern space UMAP (created in Chapter 1 - patch-pipeline)
+umap_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/2_UMAP/", clade, ".matchedsex.patches.nn.25.mindist.0.1.lab.UMAP.rds")
+umap <- readRDS(umap_path)[["layout"]]
 
 # Data preparation ----
 
@@ -193,6 +204,165 @@ threat_colour_long <- threat_colour_clean |>
 
 
 # Plotting ----
+
+# get threat data with UMAP axes
+umap_sppsex <- data.frame(species = sapply(strsplit(rownames(umap), split = "-"), "[", 1),
+                          sex = sapply(strsplit(rownames(umap), split = "-"), "[", 2), 
+                          umap)
+
+
+threat_umap <- threat_matrix |> 
+  inner_join(umap_sppsex, by = join_by("jetz_species" == "species")) |> 
+  rename(
+    UMAP1 = X1,
+    UMAP2 = X2
+  )
+# this throws a warning but it's just because we have male and female data together
+# - it's not a problem
+
+# remove duplicates based on second-order code
+threat_umap_clean <- threat_umap |> 
+  distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
+
+# add PC values
+threat_umap_clean <- threat_umap_clean |> 
+  inner_join(
+    colour_space_sppsex,
+    by = c("jetz_species" = "species", "sex" = "sex")
+  )
+
+
+# Proportional 2D density plots (The Juice) ----
+
+# set focal extinction driver
+focal_threat <- "hunt_col"
+# set axes (PCs or UMAP axes)
+ax_1 <- "PC1"
+ax_2 <- "PC2"
+
+# Get proportional density of species threatened by focal threat vs ALL other species
+prop_dens <- prop_dens_2d(
+  threat_umap_clean,
+  focal_threat = focal_threat,
+  x_axis = ax_1, y_axis = ax_2,
+  threatened_spp_only = FALSE,
+  n_bins = 200,
+  return_params = TRUE
+)
+
+
+# plot as heatmap
+plot_prop_dens_2d(
+  prop_dens
+)
+
+# Plot multiple threats together
+ex_drivers <- c("clim_chan", "hab_loss", "pollut", "hunt_col", "acc_mort", "invas_spec")
+names(ex_drivers) <- ex_drivers
+# First get the proportional densities
+prop_densities <- pbapply::pblapply(
+  ex_drivers,
+  function(driver){
+    
+    prop_dens <- prop_dens_2d(
+      threat_umap_clean,
+      focal_threat = driver,
+      x_axis = ax_1, y_axis = ax_2,
+      threatened_spp_only = FALSE,
+      n_bins = 200,
+      return_params = TRUE
+    )
+    
+  }
+)
+# Then plot on same figure
+# First get global maximum density value
+global_max_dens <- max(
+  unlist(
+    lapply(
+      prop_densities,
+      function(dens){
+        max <- max(abs(dens$prop_2dkd$z))
+      }
+      )
+  )
+)
+n_plots <- length(prop_densities)
+n_rows <- 3
+if((n_plots %% n_rows) == 0){
+  n_cols <- n_plots / n_rows
+} else {
+  n_cols <- (n_plots %/% n_rows) + 1
+}
+
+# Save as PNG
+png(
+  filename = here::here(
+    "04_output_plots", "06_pc_axes_threats", "01_proportional_density_plots",
+    paste0("extinction_drivers_vs_all_species_", ax_1, ax_2, ".png")
+  ), 
+  width = 210, height = 297,
+  units = "mm",
+  res = 300
+)
+par(
+  mfrow = c(n_rows, n_cols),
+  mar = c(4.1, 4.1, 3.1, 2.1)
+)
+lapply(
+  prop_densities,
+  plot_prop_dens_2d,
+  title = TRUE,
+  max_density_val = global_max_dens
+)
+dev.off()
+
+
+# UMAP density plot by threat
+threat_umap_clean |> 
+  bind_rows(
+    threat_umap_clean |> 
+      mutate(
+        ex_driver = "all"
+      )
+  ) |> 
+  filter(
+    iucn_cat != "LC",
+    !(ex_driver %in% c(NA, "other"))
+  ) |> 
+  mutate(
+    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    sex = factor(sex, levels = c("M", "F"))
+  ) |> 
+  # filter(
+  #   ex_driver != "all"
+  # ) |> 
+  ggplot(aes(x = X1, y = X2)) + 
+  geom_density_2d_filled() + 
+  facet_wrap(~ ex_driver)
+
+
+threat_colour_clean |> 
+  bind_rows(
+    threat_colour_clean |> 
+      mutate(
+        ex_driver = "all"
+      )
+  ) |> 
+  filter(
+    iucn_cat != "LC",
+    !(ex_driver %in% c(NA, "other"))
+  ) |> 
+  mutate(
+    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    sex = factor(sex, levels = c("M", "F"))
+  ) |> 
+  # filter(
+  #   ex_driver != "all"
+  # ) |> 
+  ggplot(aes(x = PC1, y = PC2)) + 
+  geom_density_2d_filled() + 
+  facet_wrap(~ ex_driver)
 
 # boxplot of PC values by threat type - exclude LC species
 # Compare to all threatened species
@@ -504,11 +674,30 @@ test_pc_threat <- function(pc_axis, threat_colour_long, threat, n = 1000, seed =
       )
     )
   
-  # Calculate SES (obs - mean(null)) / sd(null)
-  # SES > 1.96 indicates deviation from difference between distributions expected by chance
-  random_mean <- mean(null_test_stats)
-  random_sd <- sd(null_test_stats)
-  ses <- (test_stat_obs - random_mean) / random_sd
+  # Check if distribution of null test statistics is normal
+  norm_dist <- shapiro.test(null_test_stats)$p.value >= 0.05
+  if(norm_dist == FALSE){
+    
+    warning("Null test statistic distribution is non-normal. Using median-based Standardized \nEffect Size.")
+    
+    # Use median-based standardized effect size if non-normal distribution
+    # with median and median absolute deviation - robust to non-normal data
+    # Calculate SES (obs - median(null)) / MAD(null)
+    # SES > 1.96 indicates deviation from difference between distributions expected by chance
+    random_median <- median(null_test_stats)
+    random_mad <- mad(null_test_stats)
+    ses <- (test_stat_obs - random_median) / random_mad
+  } else {
+    
+    # Calculate SES (obs - mean(null)) / sd(null)
+    # SES > 1.96 indicates deviation from difference between distributions expected by chance
+    random_mean <- mean(null_test_stats)
+    random_sd <- sd(null_test_stats)
+    ses <- (test_stat_obs - random_mean) / random_sd
+    
+  }
+  
+  
   # calculate p-value with Laplace smoothing
   # method: rank/counting: proportion of null values equal to or larger than observed CVM statistic
   # This makes no assumptions about the shape of the null distribution, unlike standard
@@ -518,15 +707,29 @@ test_pc_threat <- function(pc_axis, threat_colour_long, threat, n = 1000, seed =
   p_val <- (length(which(null_test_stats >= test_stat_obs)) + 1) / (n + 1)
   
   # bind results together for output
-  res <- list(
-    extinction_driver = threat,
-    ses = ses,
-    test_statistic = stat_test,
-    test_stat_observed = test_stat_obs,
-    test_stat_null_mean = random_mean,
-    test_stat_null_sd = random_sd,
-    p_value = p_val
-  )
+  if(norm_dist == FALSE){
+    res <- list(
+      extinction_driver = threat,
+      ses = ses,
+      test_statistic = stat_test,
+      test_stat_observed = test_stat_obs,
+      test_stat_null_median = random_median,
+      test_stat_null_mad = random_mad,
+      p_value = p_val
+    )
+  } else {
+   
+    res <- list(
+      extinction_driver = threat,
+      ses = ses,
+      test_statistic = stat_test,
+      test_stat_observed = test_stat_obs,
+      test_stat_null_mean = random_mean,
+      test_stat_null_sd = random_sd,
+      p_value = p_val
+    )
+     
+  }
   
   # bind to distributions, if desired
   if(return_distrib == TRUE){
@@ -564,7 +767,7 @@ pc_ex_drive_res <- pbapply::pblapply(
       n = 1000,
       seed = 42,
       return_distrib = FALSE,
-      stat_test = "wass"
+      stat_test = "dts"
     )
     names(cvm) <- pcs
     cvm <- data.table::rbindlist(cvm, idcol = "PC")
@@ -785,16 +988,17 @@ results |>
   filter(
     abs(mean_shift_ses) > 1.96
   ) |> 
-  ggplot(aes(x = ex_driver, y = mean_shift_ses, colour = ex_driver)) + 
-  geom_point() + 
+  ggplot(aes(x = ex_driver, y = mean_shift_ses, fill = ex_driver)) + 
+  geom_col() + 
   facet_wrap(~ PC)
 
+# and significant variance inequality drivers
 results |> 
   filter(
     abs(var_inequal_ses) > 1.96
   ) |> 
-  ggplot(aes(x = ex_driver, y = var_inequal_ses, colour = ex_driver)) + 
-  geom_point() + 
+  ggplot(aes(x = ex_driver, y = var_inequal_ses, fill = ex_driver)) + 
+  geom_col() + 
   facet_wrap(~ PC)
 
 # check if inequality of variance SES is associated with mean shift SES
