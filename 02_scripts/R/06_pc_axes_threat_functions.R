@@ -17,17 +17,23 @@ prop_dens_2d <- function(threat_col_data, focal_threat, x_axis, y_axis, threaten
     # this will automatically exclude NA rows
   }
   
+  # Get x and y limits - use the entire range of the x and y axes
+  x_lim <- range(threat_col_data[[x_axis]])
+  y_lim <- range(threat_col_data[[y_axis]])
+  
   # Get 2D density of non-focal rows
   non_focal_2dkd <- MASS::kde2d(
     x = threat_umap_clean[non_focal_threat_rows, x_axis], 
     y = threat_umap_clean[non_focal_threat_rows, y_axis],
-    n = n_bins
+    n = n_bins,
+    lims = c(x_lim, y_lim)
   )
   # Get 2D density of focal rows
   focal_2dkd <- MASS::kde2d(
     x = threat_umap_clean[focal_threat_rows, x_axis], 
     y = threat_umap_clean[focal_threat_rows, y_axis],
-    n = n_bins
+    n = n_bins,
+    lims = c(x_lim, y_lim)
   )
   # calculate proportional 2D density (i.e., 2D density of focal species - 2D density of 
   # non-focal species)
@@ -171,4 +177,180 @@ plot_prop_dens_2d <- function(prop_dens_obj, focal_threat = NULL, x_axis = NULL,
   
   
   
+}
+
+# Calculate SES or test statistic of twosamples distributional difference test
+# (e.g. Wasserstein's distance) for a single PC axis and threat
+test_pc_threat <- function(pc_axis, threat_colour_long, threat, n = 1000, seed = NULL, return_distrib = TRUE, stat_test = c("cvm", "dts", "wass", "ks", "kuiper", "ad")){
+  
+  # Set twosamples stats test to use
+  stat_func <- switch(
+    stat_test,
+    "cvm" = twosamples::cvm_stat,
+    "dts" = twosamples::dts_stat,
+    "wass" = twosamples::wass_stat,
+    "ks"  = twosamples::ks_stat,
+    "kuiper" = twosamples::kuiper_stat,
+    "ad"  = twosamples::ad_stat,
+    stop("Error: Invalid test type specified. Choose 'cvm', 'wass', 'dts', 'ks', 'kuiper' or 'ad'.")
+  )
+  
+  # Extract distribution of focal threat species and non-focal-threat species
+  focal_distrib <- threat_colour_long |> 
+    filter(
+      iucn_cat != "LC", 
+      PC == pc_axis, 
+      ex_driver == threat
+    ) |> 
+    pull(PC_value)
+  non_focal_distrib <- threat_colour_long |> 
+    filter(
+      iucn_cat != "LC", 
+      PC == pc_axis, 
+      ex_driver != threat
+    ) |> 
+    pull(PC_value)
+  # NOTE that this excludes species for which ex_driver is NA - this includes species
+  # which truly have no threats (i.e. LC species) AND threatened species for which there is
+  # no threat data
+  # This is the correct thing to do because we cannot say for sure that these threatened species
+  # are not threatened by the focal threat
+  # It includes species which are threatened by non-significant drivers of extinction, as 
+  # determined by Stewart et al 2025 Nat Ecol Evol (see Supplementary_Dataset.xlsx for details)
+  
+  # Extract distribution of all threatened species (focal and non-focal)
+  # We will use this to generate our null distributions
+  all_distrib <- threat_colour_long |> 
+    filter(
+      iucn_cat != "LC",
+      PC == pc_axis
+    ) |> 
+    pull(PC_value)
+  
+  # Check that lengths of distributions match
+  distrib_match <- function(focal_distrib, non_focal_distrib, all_distrib){
+    assertthat::are_equal(
+      length(focal_distrib) + length(non_focal_distrib), 
+      length(all_distrib)
+    )
+  }
+  assertthat::on_failure(distrib_match) <- function(call, env){
+    "Lengths of non-focal and focal distributions do not equal length of all-threat distribution. \nCheck if species threats are correctly coded (e.g. that threatened species with no listed threats do not have NA ex_driver value)."
+  }
+  assertthat::assert_that(distrib_match(focal_distrib, non_focal_distrib, all_distrib))
+  
+  # get lengths of focal and non-focal distributions
+  n_focal <- length(focal_distrib)
+  n_non_focal <- length(non_focal_distrib)
+  n_all <- n_focal + n_non_focal
+  
+  # calculate observed CVM value
+  test_stat_obs <- stat_func(
+    a = focal_distrib,
+    b = non_focal_distrib,
+  )
+  
+  # set seed (if specified)
+  if(!is.null(seed)){
+    set.seed(seed)
+  }
+  
+  
+  # Generate set of null distribution from non-focal-
+  null_test_stats <- unlist(
+    lapply(
+      1:n, 
+      function(i){
+        all_sample <- sample(
+          all_distrib,
+          size = n_all,
+          replace = FALSE
+        )
+        focal_sample <- all_sample[1:n_focal]
+        non_focal_sample <- all_sample[(n_focal + 1):n_all]
+        
+        # Calculate test statistic for each random distribution, vs the original non-focal-threat distribution
+        null_test_stat <- stat_func(
+          a = focal_sample,
+          b = non_focal_sample,
+        )
+        return(null_test_stat)
+      }
+    )
+  )
+  
+  # Check if distribution of null test statistics is normal
+  norm_dist <- shapiro.test(null_test_stats)$p.value >= 0.05
+  if(norm_dist == FALSE){
+    
+    warning("Null test statistic distribution is non-normal. Using median-based Standardized \nEffect Size.")
+    
+    # Use median-based standardized effect size if non-normal distribution
+    # with median and median absolute deviation - robust to non-normal data
+    # Calculate SES (obs - median(null)) / MAD(null)
+    # SES > 1.96 indicates deviation from difference between distributions expected by chance
+    random_median <- median(null_test_stats)
+    random_mad <- mad(null_test_stats)
+    es <- test_stat_obs - random_median
+    ses <- es / random_mad
+  } else {
+    
+    # Calculate SES (obs - mean(null)) / sd(null)
+    # SES > 1.96 indicates deviation from difference between distributions expected by chance
+    random_mean <- mean(null_test_stats)
+    random_sd <- sd(null_test_stats)
+    es <- test_stat_obs - random_mean
+    ses <- es / random_sd
+    
+  }
+  
+  
+  # calculate p-value with Laplace smoothing
+  # method: rank/counting: proportion of null values equal to or larger than observed CVM statistic
+  # This makes no assumptions about the shape of the null distribution, unlike standard
+  # p-value calculations (which assume normal distribution). CVM stat distribution is likely
+  # a chi-square distribution, not normal
+  # This is the method used under the hood in twosamples::cvm_test
+  p_val <- (length(which(null_test_stats >= test_stat_obs)) + 1) / (n + 1)
+  
+  # bind results together for output
+  if(norm_dist == FALSE){
+    res <- list(
+      extinction_driver = threat,
+      ES = es,
+      SES = ses,
+      test_statistic = stat_test,
+      test_stat_observed = test_stat_obs,
+      test_stat_null_median = random_median,
+      test_stat_null_mad = random_mad,
+      p_value = p_val
+    )
+  } else {
+    
+    res <- list(
+      extinction_driver = threat,
+      ES = es,
+      SES = ses,
+      test_statistic = stat_test,
+      test_stat_observed = test_stat_obs,
+      test_stat_null_mean = random_mean,
+      test_stat_null_sd = random_sd,
+      p_value = p_val
+    )
+    
+  }
+  
+  # bind to distributions, if desired
+  if(return_distrib == TRUE){
+    res$null_test_stats <- null_test_stats
+  }
+  
+  return(res)
+  
+}
+
+# Null distribution and observed test value plotting function
+plot_cvm_distrib <- function(cvm_res, bins = 30){
+  hist(cvm_res$cvm_null, breaks = bins)
+  abline(v = cvm_res$cvm_observed, col = "red")
 }

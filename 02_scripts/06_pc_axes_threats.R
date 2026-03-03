@@ -575,182 +575,12 @@ plot(cvm)
 # So, no need to manually do the random sampling myself - I can let the premade function do it
 
 
-# Set it up to loop over the different PC axes, for a single threat
-test_pc_threat <- function(pc_axis, threat_colour_long, threat, n = 1000, seed = NULL, return_distrib = TRUE, stat_test = c("cvm", "dts", "wass", "ks", "kuiper", "ad")){
-  
-  # Set twosamples stats test to use
-  stat_func <- switch(
-    stat_test,
-    "cvm" = twosamples::cvm_stat,
-    "dts" = twosamples::dts_stat,
-    "wass" = twosamples::wass_stat,
-    "ks"  = twosamples::ks_stat,
-    "kuiper" = twosamples::kuiper_stat,
-    "ad"  = twosamples::ad_stat,
-    stop("Error: Invalid test type specified. Choose 'cvm', 'wass', 'dts', 'ks', 'kuiper' or 'ad'.")
-  )
-  
-  # Extract distribution of focal threat species and non-focal-threat species
-  focal_distrib <- threat_colour_long |> 
-    filter(
-      iucn_cat != "LC", 
-      PC == pc_axis, 
-      ex_driver == threat
-    ) |> 
-    pull(PC_value)
-  non_focal_distrib <- threat_colour_long |> 
-    filter(
-      iucn_cat != "LC", 
-      PC == pc_axis, 
-      ex_driver != threat
-    ) |> 
-    pull(PC_value)
-  # NOTE that this excludes species for which ex_driver is NA - this includes species
-  # which truly have no threats (i.e. LC species) AND threatened species for which there is
-  # no threat data
-  # This is the correct thing to do because we cannot say for sure that these threatened species
-  # are not threatened by the focal threat
-  # It includes species which are threatened by non-significant drivers of extinction, as 
-  # determined by Stewart et al 2025 Nat Ecol Evol (see Supplementary_Dataset.xlsx for details)
-  
-  # Extract distribution of all threatened species (focal and non-focal)
-  # We will use this to generate our null distributions
-  all_distrib <- threat_colour_long |> 
-    filter(
-      iucn_cat != "LC",
-      PC == pc_axis
-    ) |> 
-    pull(PC_value)
-  
-  # Check that lengths of distributions match
-  distrib_match <- function(focal_distrib, non_focal_distrib, all_distrib){
-    assertthat::are_equal(
-        length(focal_distrib) + length(non_focal_distrib), 
-        length(all_distrib)
-        )
-  }
-  assertthat::on_failure(distrib_match) <- function(call, env){
-    "Lengths of non-focal and focal distributions do not equal length of all-threat distribution. \nCheck if species threats are correctly coded (e.g. that threatened species with no listed threats do not have NA ex_driver value)."
-  }
-  assertthat::assert_that(distrib_match(focal_distrib, non_focal_distrib, all_distrib))
-  
-  # get lengths of focal and non-focal distributions
-  n_focal <- length(focal_distrib)
-  n_non_focal <- length(non_focal_distrib)
-  n_all <- n_focal + n_non_focal
-  
-  # calculate observed CVM value
-  test_stat_obs <- stat_func(
-      a = focal_distrib,
-      b = non_focal_distrib,
-    )
-  
-  # set seed (if specified)
-  if(!is.null(seed)){
-    set.seed(seed)
-  }
-  
-
-  # Generate set of null distribution from non-focal-
-  null_test_stats <- unlist(
-    lapply(
-      1:n, 
-      function(i){
-        all_sample <- sample(
-          all_distrib,
-          size = n_all,
-          replace = FALSE
-          )
-        focal_sample <- all_sample[1:n_focal]
-        non_focal_sample <- all_sample[(n_focal + 1):n_all]
-        
-        # Calculate test statistic for each random distribution, vs the original non-focal-threat distribution
-        null_test_stat <- stat_func(
-          a = focal_sample,
-          b = non_focal_sample,
-        )
-        return(null_test_stat)
-        }
-      )
-    )
-  
-  # Check if distribution of null test statistics is normal
-  norm_dist <- shapiro.test(null_test_stats)$p.value >= 0.05
-  if(norm_dist == FALSE){
-    
-    warning("Null test statistic distribution is non-normal. Using median-based Standardized \nEffect Size.")
-    
-    # Use median-based standardized effect size if non-normal distribution
-    # with median and median absolute deviation - robust to non-normal data
-    # Calculate SES (obs - median(null)) / MAD(null)
-    # SES > 1.96 indicates deviation from difference between distributions expected by chance
-    random_median <- median(null_test_stats)
-    random_mad <- mad(null_test_stats)
-    ses <- (test_stat_obs - random_median) / random_mad
-  } else {
-    
-    # Calculate SES (obs - mean(null)) / sd(null)
-    # SES > 1.96 indicates deviation from difference between distributions expected by chance
-    random_mean <- mean(null_test_stats)
-    random_sd <- sd(null_test_stats)
-    ses <- (test_stat_obs - random_mean) / random_sd
-    
-  }
-  
-  
-  # calculate p-value with Laplace smoothing
-  # method: rank/counting: proportion of null values equal to or larger than observed CVM statistic
-  # This makes no assumptions about the shape of the null distribution, unlike standard
-  # p-value calculations (which assume normal distribution). CVM stat distribution is likely
-  # a chi-square distribution, not normal
-  # This is the method used under the hood in twosamples::cvm_test
-  p_val <- (length(which(null_test_stats >= test_stat_obs)) + 1) / (n + 1)
-  
-  # bind results together for output
-  if(norm_dist == FALSE){
-    res <- list(
-      extinction_driver = threat,
-      ses = ses,
-      test_statistic = stat_test,
-      test_stat_observed = test_stat_obs,
-      test_stat_null_median = random_median,
-      test_stat_null_mad = random_mad,
-      p_value = p_val
-    )
-  } else {
-   
-    res <- list(
-      extinction_driver = threat,
-      ses = ses,
-      test_statistic = stat_test,
-      test_stat_observed = test_stat_obs,
-      test_stat_null_mean = random_mean,
-      test_stat_null_sd = random_sd,
-      p_value = p_val
-    )
-     
-  }
-  
-  # bind to distributions, if desired
-  if(return_distrib == TRUE){
-    res$null_test_stats <- null_test_stats
-  }
-  
-  return(res)
-  
-}
-
-# Null distribution and observed test value plotting function
-plot_cvm_distrib <- function(cvm_res, bins = 30){
-  hist(cvm_res$cvm_null, breaks = bins)
-  abline(v = cvm_res$cvm_observed, col = "red")
-}
 
 # Now apply across each extinction driver and PC
 # could parallelise this but it only takes ~30s for 7 axes
 # define threat types and focal PCs first 
 threat_types <- c(hab_loss = "hab_loss", hunt_col = "hunt_col", invas_spec = "invas_spec", clim_chan = "clim_chan", pollut = "pollut", acc_mort = "acc_mort")
-pcs <- paste0("PC", 1:7)
+pcs <- paste0("PC", 1:3)
 
 # Run across PCs/extinction drivers
 pc_ex_drive_res <- pbapply::pblapply(
@@ -871,10 +701,11 @@ pc_ex_drive_res |>
   )
 
 
-# Keep only the axes for which |SES| > 1.96
-sig_pc_exdrive <- pc_ex_drive_res |> 
+# Keep only the axes for which p-value (from twosamples results) < 0.05
+# Use this because SES is unreliable for skewed distributions of null statistics
+sig_pc_exdrive <- res_ts |> 
   filter(
-    abs(ses) > 1.96
+    p_value < 0.05
   )
 sig_combos <- sig_pc_exdrive |> 
   select(
@@ -958,7 +789,8 @@ ttest_res <- pbapply::pblapply(
     # Calculate SES for t statistics
     null_t_mean <- mean(null_t_stats)
     null_t_sd <- sd(null_t_stats)
-    mean_shift_ses <- (obs_t_stat - null_t_mean) / null_t_sd
+    mean_shift_es <- obs_t_stat - null_t_mean
+    mean_shift_ses <- mean_shift_es / null_t_sd
     
     # Get null distribution of F values
     null_f_vals <- unlist(
@@ -973,9 +805,22 @@ ttest_res <- pbapply::pblapply(
     # Calculate SES for F values
     null_f_mean <- mean(null_f_vals)
     null_f_sd <- sd(null_f_vals)
-    var_inequal_ses <- (obs_f_val - null_f_mean) / null_f_sd
+    var_inequal_es <- obs_f_val - null_f_mean
+    var_inequal_ses <- var_inequal_es / null_f_sd
     
-    res <- data.frame(PC = focal_combo$PC, ex_driver = focal_combo$extinction_driver, mean_shift_obs = obs_t_stat, mean_shift_null_mean = null_t_mean, mean_shift_null_sd = null_t_sd, mean_shift_ses = mean_shift_ses, var_inequal_obs = obs_f_val, var_inequal_null_mean = null_f_mean, var_inequal_sd = null_f_sd, var_inequal_ses = var_inequal_ses)
+    res <- data.frame(
+      PC = focal_combo$PC, 
+      ex_driver = focal_combo$extinction_driver, 
+      mean_shift_obs = obs_t_stat, 
+      mean_shift_null_mean = null_t_mean, 
+      mean_shift_null_sd = null_t_sd, 
+      mean_shift_es = mean_shift_es,
+      mean_shift_ses = mean_shift_ses, 
+      var_inequal_obs = obs_f_val, 
+      var_inequal_null_mean = null_f_mean, 
+      var_inequal_sd = null_f_sd, 
+      var_inequal_es = var_inequal_es,
+      var_inequal_ses = var_inequal_ses)
     
     return(res)
     
@@ -988,7 +833,7 @@ results |>
   filter(
     abs(mean_shift_ses) > 1.96
   ) |> 
-  ggplot(aes(x = ex_driver, y = mean_shift_ses, fill = ex_driver)) + 
+  ggplot(aes(x = ex_driver, y = mean_shift_es, fill = ex_driver)) + 
   geom_col() + 
   facet_wrap(~ PC)
 
@@ -997,7 +842,7 @@ results |>
   filter(
     abs(var_inequal_ses) > 1.96
   ) |> 
-  ggplot(aes(x = ex_driver, y = var_inequal_ses, fill = ex_driver)) + 
+  ggplot(aes(x = ex_driver, y = var_inequal_es, fill = ex_driver)) + 
   geom_col() + 
   facet_wrap(~ PC)
 
