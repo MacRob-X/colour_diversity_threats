@@ -30,7 +30,7 @@ colour_space <- readRDS(colspace_path)[[space]][["x"]]
 
 # Load raw species extinction matrices (1=extant, 0=extinct) for 100% abatement scope
 extinctions = read.csv(
-  here::here("01_input_data", "all_pamat_all_threats_1000_17122024.csv"), 
+  here::here("01_input_data", "all_pamat_all_threats_1000.csv"), 
   row.names = 1
 ) # 100% scope
 
@@ -106,6 +106,7 @@ averted_exts[averted_exts$code != "none", -1] <- survival_numbers[survival_numbe
         survival_numbers[survival_numbers$code == "none", -1],
         survival_numbers[survival_numbers$code == "none", -1],
         survival_numbers[survival_numbers$code == "none", -1],
+        survival_numbers[survival_numbers$code == "none", -1],
         survival_numbers[survival_numbers$code == "none", -1])
 
 # Transpose the data frame for merging (to have species as rows and threat codes as columns)
@@ -114,7 +115,7 @@ averted_exts_t = t(averted_exts) |>
   tibble::rownames_to_column("species")
 # Assign the first row (the codes) as the column names
 colnames(averted_exts_t) = c("species", averted_exts_t[1, -1]) 
-# Remove the first row (the old column names) and the 'all' and 'res' codes (only keeping the 6 drivers and 'none')
+# Remove the first row (the old column names) and the 'res' code (only keeping the 6 drivers, 'all', and 'none')
 averted_exts_t = averted_exts_t[-1, ]
 # Get the threat column names
 threat_cols <- colnames(averted_exts_t)[colnames(averted_exts_t) %in% threats]
@@ -136,7 +137,51 @@ num_extincts <- data.frame(
 # loaded on PC1
 
 # Merge the PCA colourspace scores (PCs 1-7 only) with the extinction numbers data
-dat <- merge(colour_space_sppsex[, c("species", "sex", paste0("PC", 1:3))], num_extincts, by = "species")
+dat <- merge(colour_space_sppsex[, c("species", "sex", paste0("PC", 1:7))], num_extincts, by = "species")
+
+# Plotting on colourspace ----
+
+dat |> 
+  filter(
+    sex == "M"
+  ) |> 
+  filter(
+    all > 1000
+  ) |> 
+  ggplot(aes(x = PC1, y = PC2, alpha = log(hab))) + 
+  geom_point()
+
+# merge survival numbers data with colour space and plot
+survival_numbers_t %>%
+  mutate(
+    across(everything(), as.numeric)
+  ) %>%
+  mutate(
+    species = rownames(.)
+  ) |> 
+  tidyr::pivot_longer(
+    all_of(c("none", threat_cols)),names_to = "ex_driver", values_to = "survival"
+  ) |> 
+  mutate(
+    extinct = 1000 - survival # need to also get averted extinctions in here
+  ) |> 
+  inner_join(
+    colour_space_sppsex[, c("species", "sex", paste0("PC", 1:7))],
+    by = "species"
+  ) |> 
+  filter(
+    sex == "M"
+  ) |> 
+  # mutate(
+  #   all_inv = 1000 - hab
+  # ) |> 
+  filter(
+    extinct > 500
+  ) |>
+  ggplot(aes(x = PC1, y = PC2, alpha = extinct)) + 
+  geom_point(col = "purple") + 
+  facet_wrap(~ ex_driver)
+
 
 # Run MCMCglmm ----
 

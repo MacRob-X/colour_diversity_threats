@@ -23,6 +23,8 @@ latest <- TRUE
 cutoff_year <- NULL
 # Clade to focus on ("Aves", "Neognaths", "Neoaves", "Passeriformes")
 clade <- "Aves"
+# Colour space to use
+space <- "lab"
 
 # Load data ----
 
@@ -40,10 +42,10 @@ threat_matrix <- read.csv(
 
 # load colour pattern space (created in Chapter 1 - patch-pipeline)
 colspace_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/1_Raw_PCA/", clade, ".matchedsex.patches.250716.PCAcolspaces.rds")
-colour_space <- readRDS(colspace_path)[["lab"]][["x"]]
+colour_space <- readRDS(colspace_path)[[space]][["x"]]
 
 # load colour pattern space UMAP (created in Chapter 1 - patch-pipeline)
-umap_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/2_UMAP/", clade, ".matchedsex.patches.nn.25.mindist.0.1.lab.UMAP.rds")
+umap_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/2_UMAP/", clade, ".matchedsex.patches.nn.25.mindist.0.1.", space, ".UMAP.rds")
 umap <- readRDS(umap_path)[["layout"]]
 
 # Data preparation ----
@@ -299,7 +301,7 @@ if((n_plots %% n_rows) == 0){
 png(
   filename = here::here(
     "04_output_plots", "06_pc_axes_threats", "01_proportional_density_plots",
-    paste0("extinction_drivers_vs_all_species_", ax_1, ax_2, ".png")
+    paste0("extinction_drivers_vs_all_species_", space, "_", ax_1, ax_2, ".png")
   ), 
   width = 210, height = 297,
   units = "mm",
@@ -580,7 +582,7 @@ plot(cvm)
 # could parallelise this but it only takes ~30s for 7 axes
 # define threat types and focal PCs first 
 threat_types <- c(hab_loss = "hab_loss", hunt_col = "hunt_col", invas_spec = "invas_spec", clim_chan = "clim_chan", pollut = "pollut", acc_mort = "acc_mort")
-pcs <- paste0("PC", 1:3)
+pcs <- paste0("PC", 1:7)
 
 # Run across PCs/extinction drivers
 pc_ex_drive_res <- pbapply::pblapply(
@@ -597,7 +599,7 @@ pc_ex_drive_res <- pbapply::pblapply(
       n = 1000,
       seed = 42,
       return_distrib = FALSE,
-      stat_test = "dts"
+      stat_test = "wass"
     )
     names(cvm) <- pcs
     cvm <- data.table::rbindlist(cvm, idcol = "PC")
@@ -762,7 +764,10 @@ ttest_res <- pbapply::pblapply(
     obs_t_stat <- t.test(PC_value ~ ex_driver, data = mod_dat)$statistic
     obs_f_val <- suppressWarnings(car::leveneTest(PC_value ~ ex_driver, data = mod_dat)["group", "F value"])
     
-    null_distribs <- lapply(1:1000, 
+    # set number of bootstraps
+    n <- 1000
+    
+    null_distribs <- lapply(1:n, 
                             function(i){
                               sample_rows <- sample(
                                 1:nrow(mod_dat),
@@ -792,6 +797,9 @@ ttest_res <- pbapply::pblapply(
     mean_shift_es <- obs_t_stat - null_t_mean
     mean_shift_ses <- mean_shift_es / null_t_sd
     
+    # Calculate p-value for t statistics
+    p_val_t <- (length(which(abs(null_t_stats) >= abs(obs_t_stat))) + 1) / (n + 1)
+    
     # Get null distribution of F values
     null_f_vals <- unlist(
       lapply(
@@ -808,6 +816,9 @@ ttest_res <- pbapply::pblapply(
     var_inequal_es <- obs_f_val - null_f_mean
     var_inequal_ses <- var_inequal_es / null_f_sd
     
+    # Calculate p-value for F values
+    p_val_f <- (length(which(null_f_vals >= obs_f_val)) + 1) / (n + 1)
+    
     res <- data.frame(
       PC = focal_combo$PC, 
       ex_driver = focal_combo$extinction_driver, 
@@ -815,12 +826,14 @@ ttest_res <- pbapply::pblapply(
       mean_shift_null_mean = null_t_mean, 
       mean_shift_null_sd = null_t_sd, 
       mean_shift_es = mean_shift_es,
-      mean_shift_ses = mean_shift_ses, 
+      mean_shift_ses = mean_shift_ses,
+      mean_shift_p = p_val_t,
       var_inequal_obs = obs_f_val, 
       var_inequal_null_mean = null_f_mean, 
       var_inequal_sd = null_f_sd, 
       var_inequal_es = var_inequal_es,
-      var_inequal_ses = var_inequal_ses)
+      var_inequal_ses = var_inequal_ses,
+      var_inequal_p = p_val_f)
     
     return(res)
     
@@ -831,7 +844,7 @@ results <- do.call(rbind, ttest_res)
 # plot significant meanshift drivers
 results |> 
   filter(
-    abs(mean_shift_ses) > 1.96
+    mean_shift_p < 0.05
   ) |> 
   ggplot(aes(x = ex_driver, y = mean_shift_es, fill = ex_driver)) + 
   geom_col() + 
@@ -840,7 +853,7 @@ results |>
 # and significant variance inequality drivers
 results |> 
   filter(
-    abs(var_inequal_ses) > 1.96
+    var_inequal_p < 0.05
   ) |> 
   ggplot(aes(x = ex_driver, y = var_inequal_es, fill = ex_driver)) + 
   geom_col() + 

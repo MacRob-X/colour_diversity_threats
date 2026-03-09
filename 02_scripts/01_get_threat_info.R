@@ -70,7 +70,7 @@ writepath <- here::here(
 # Get threat data for all species
 # this will write to a new CSV if the specified filename and path doesn't exist yet, or append if
 # it already exists
-allspec_threat_data <- lapply(iucn_species, get_threat_data, latest = latest, year_cutoff = cutoff_year, csv_writepath = writepath, threats_skeleton = threats_skeleton)
+allspec_threat_data <- lapply(iucn_species[501:length(iucn_species)], get_threat_data, latest = latest, year_cutoff = cutoff_year, csv_writepath = writepath, threats_skeleton = threats_skeleton)
 
 # Convert data to matrix format (if you haven't written to a CSV, which you probably should always do)
 threat_matrix <- do.call(rbind, allspec_threat_data)
