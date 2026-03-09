@@ -106,12 +106,12 @@ threat_matrix <- threat_matrix |>
 
 
 # For now, let's make all the flagged threats (i.e. those which are not significant predictors
-# of extinction risk) NA, as we're not interested them
+# of extinction risk) have "no_sig_threats", as we might want to use them later
 threat_matrix <- threat_matrix |> 
   mutate(
     ex_driver = ifelse(
       ex_driver == "FLAG",
-      NA,
+      "no_sig_threats",
       ex_driver
     )
   )
@@ -151,25 +151,53 @@ threat_centr <- threat_matrix |>
 threat_centr_clean <- threat_centr |> 
   distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
 
+# assign all species with no threats as "no_threats" in the extinction driver column
+threat_centr_clean <- threat_centr_clean |> 
+  mutate(
+    ex_driver = ifelse(is.na(notes), ex_driver, ifelse(notes == "no_threats", "no_threats", ex_driver))
+  ) |> 
+  mutate(
+    ex_driver = factor(ex_driver, levels = c("no_threats", "hab_loss", "invas_spec", "hunt_col", "clim_chan", "acc_mort", "pollut", "other", "no_sig_threats"))
+  )
+
 # boxplot of centroid distances by threat type - exclude LC species and 'Other' threats
 bp <- threat_centr_clean |> 
   filter(
     !is.na(sex),
     !is.na(ex_driver),
-    iucn_cat != "LC",
-    ex_driver != "other"
+    !(iucn_cat %in% c("LC", "NT")),
+#    ex_driver != "other"
   ) |> 
-  ggplot(aes(x = ex_driver, y = centr_dists, fill = ex_driver)) + 
+  ggplot(aes(
+#    fill = ex_driver, 
+    x = ex_driver, y = centr_dists)) + 
   geom_boxplot(outliers = F) + 
   facet_grid(~ sex) + 
   labs(fill = "Drivers of extinction") + 
   ylab("Distance to centroid") + xlab("Drivers of extinction") + 
-  scale_fill_discrete(labels = c("Accidental mortality", "Climate change and severe weather", "Habitat loss and degradation", "Hunting and collection", "Invasive species and disease", "Pollution")) +
+  scale_x_discrete(
+    labels = c(
+      "No threats", 
+      "Habitat loss", 
+      "Invasive species", 
+      "Hunting & collection", 
+      "Climate change", 
+      "Accidental mortality", 
+      "Pollution", 
+      "Other", 
+      "No significant threats")
+  ) +
+  # scale_fill_discrete(
+  #   labels = c("No threats", "Habitat loss", "Invasive species", "Hunting & collection", "Climate change", "Accidental mortality", "Pollution", "Other", "No significant threats")
+  # ) +
+  theme_bw() + 
   theme(axis.text.x = element_text(angle = 45,  hjust=1))
+
+bp
 
 ggsave(
   here::here(
-    "04_output_plots", "01_colour_threats", "centroid_dist_extinction_drivers_boxplot.svg"
+    "04_output_plots", "01_colour_threats", "threatenedspecies_centroid_dist_extinction_drivers_boxplot.svg"
   ),
   plot = bp,
   device = "svg",
@@ -189,6 +217,168 @@ summary(an_f)
 lm_f <- lm(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "F", ])
 av_f <- aov(lm_f)
 tukey_centr_dists_f <- TukeyHSD(av_f)
+
+# Both sexes together
+an_all <- aov(centr_dists ~ ex_driver, data = threat_centr_clean)
+summary(an_all)
+# post-hoc Tukey test
+lm_all <- lm(centr_dists ~ ex_driver, data = threat_centr_clean)
+av_all <- aov(lm_all)
+tukey_centr_dists_all <- TukeyHSD(av_all)
+
+
+# Linear modelling approach
+
+# First include all species
+# run model with no_threats species as the baseline value
+lm_mod <- lm(centr_dists ~ ex_driver, data = threat_centr_clean)
+summary(lm_mod)
+# save output as csv
+write.csv(
+  coef(summary(lm_mod)),
+  file = here::here(
+    "03_output_data", "03_colour_threats",
+    "lm_out_centr_dists~ex_driver_allspecies.csv"
+  )
+)
+# Species threatened by ANY of the extinction drivers, and those threatened by non-significant drivers,
+# all tend to have higher distance to centroid than species with no threats
+# post-hoc Tukey test
+aov_lm <- aov(lm_mod)
+summary(aov_lm)
+tukey_lm <- TukeyHSD(aov_lm)
+tukey_lm
+
+# Now limit to threatened (CR, EN, VU) species only
+# run model with no_sig_threats species as the baseline value
+threat_centr_threatened <- threat_centr_clean |> 
+  filter(
+    !(iucn_cat %in% c("LC", "NT"))
+  ) |> 
+  mutate(
+    ex_driver = factor(ex_driver, levels = c("no_sig_threats", "hab_loss", "invas_spec", "hunt_col", "clim_chan", "acc_mort", "pollut", "other"))
+  )
+lm_mod_t <- lm(centr_dists ~ ex_driver, data = threat_centr_threatened)
+summary(lm_mod_t)
+# save output as csv
+write.csv(
+  coef(summary(lm_mod_t)),
+  file = here::here(
+    "03_output_data", "03_colour_threats",
+    "lm_out_centr_dists~ex_driver_threatenedspecies.csv"
+  )
+)
+# In threatened species, those  threatened by Hunting & collection and Accidental mortality 
+# tend to have higher distance to centroid than species with no SIGNIFICANT threats
+# post-hoc Tukey test
+aov_lm_t <- aov(lm_mod_t)
+summary(aov_lm_t)
+tukey_lm_t <- TukeyHSD(aov_lm_t)
+tukey_lm_t
+# save output as csv
+write.csv(
+  tukey_lm_t$ex_driver,
+  file = here::here(
+    "03_output_data", "03_colour_threats",
+    "tukey_out_centr_dists~ex_driver_threatenedspecies.csv"
+  )
+)
+# Significant pairwise differences:
+# hunt_col-no_sig_threats 
+# hunt_col-hab_loss
+# hunt_col-invas_spec
+# clim_chan-hunt_col (-ve)
+# acc_mort-hab_loss
+# acc_mort-invas_spec
+# acc_mort-clim_chan
+# So, then, broadly speaking, species threatened by hunting and collection and by accidental 
+# mortality tend to have higher distance to centroid (and therefore more unusual colour pattern
+# phenotype) than those threatened by other threats
+
+# Do the same, but restricted to males only
+# First include all species
+# run model with no_threats species as the baseline value
+lm_mod_m <- lm(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "M", ])
+summary(lm_mod_m)
+# Species threatened by most extinction drivers, with the exception of Pollution and Other 
+# significant drivers tend to have higher distance to centroid than species with no threats
+# post-hoc Tukey test
+aov_lm_m <- aov(lm_mod_m)
+summary(aov_lm_m)
+tukey_lm_m <- TukeyHSD(aov_lm_m)
+tukey_lm_m
+
+# Now limit to threatened (CR, EN, VU) species only
+# run model with no_sig_threats species as the baseline value
+lm_mod_t_m <- lm(centr_dists ~ ex_driver, data = threat_centr_threatened[threat_centr_threatened$sex == "M", ])
+summary(lm_mod_t_m)
+# In threatened species, those  threatened by Hunting & collection (but not Accidental mortality) 
+# tend to have higher distance to centroid than species with no SIGNIFICANT threats
+# post-hoc Tukey test
+aov_lm_t_m <- aov(lm_mod_t_m)
+summary(aov_lm_t_m)
+tukey_lm_t_m <- TukeyHSD(aov_lm_t_m)
+tukey_lm_t_m
+# Significant pairwise differences:
+# hunt_col-hab_loss
+# hunt_col-invas_spec
+# So, then, broadly speaking, species threatened by hunting and collection 
+# tend to have higher distance to centroid (and therefore more unusual colour pattern
+# phenotype) than those threatened by habitat loss or by invasive species
+# Note that the disappearance of lots of significant pairwise differences doesn't necessarily
+# mean these differences aren't there - this test has lower statistical power because of the 
+# lower sample size
+
+
+# Finally, do the same, but restricted to females only
+# First include all species
+# run model with no_threats species as the baseline value
+lm_mod_f <- lm(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "F", ])
+summary(lm_mod_f)
+# Species threatened by ANY of the extinction drivers, and those threatened by non-significant drivers,
+# all tend to have higher distance to centroid than species with no threats
+# post-hoc Tukey test
+aov_lm_f <- aov(lm_mod_f)
+summary(aov_lm_f)
+tukey_lm_f <- TukeyHSD(aov_lm_f)
+tukey_lm_f
+
+# Now limit to threatened (CR, EN, VU) species only
+# run model with no_sig_threats species as the baseline value
+lm_mod_t_f <- lm(centr_dists ~ ex_driver, data = threat_centr_threatened[threat_centr_threatened$sex == "F", ])
+summary(lm_mod_t_f)
+# In threatened species, those  threatened by Hunting & collection and Accidental mortality 
+# tend to have higher distance to centroid than species with no SIGNIFICANT threats
+# There's also a sub-significant tendency for species threatened by climate change to have 
+# lower distance to centroid
+# post-hoc Tukey test
+aov_lm_t_f <- aov(lm_mod_t_f)
+summary(aov_lm_t_f)
+tukey_lm_t_f <- TukeyHSD(aov_lm_t_f)
+tukey_lm_t_f
+# Significant pairwise differences:
+# hunt_col-hab_loss
+# hunt_col-invas_spec
+# clim_chan-hunt_col (-ve)
+# acc_mort-hab_loss
+# acc_mort-invas_spec
+# acc_mort-clim_chan
+# So, then, broadly speaking, species threatened by hunting and collection and accidental mortality
+# tend to have higher distance to centroid (and therefore more unusual colour pattern
+# phenotype) than those threatened by habitat loss, invasive species and climate change
+# Not only are the results for acc_mort significant here, we can see that it's not just due to 
+# sample size because the effect size is much larger here than for males
+# So it looks like accidentality mortality and disturbance disproportionately acts on species with
+# unusual female colour pattern phenotype but this tendency is much weaker/non-significant for 
+# male colour pattern phenotype
+# This could be because [and this is unsubstantiated so far] females with unusual colour pattern
+# phenotype tend to be in monochromatic species in which the phenotype is extreme relative to
+# average female colour (which tends to be less extreme) but not relative to average male colour
+# (which tends to be more extreme)
+
+
+
+
 
 # Individual PC axes ----
 
