@@ -8,6 +8,13 @@ rm(list=ls())
 library(dplyr)
 library(ggplot2)
 
+# Load custom functions ----
+source(
+  here::here(
+    "02_scripts", "R", "04_threat_abatements_functions.R"
+  )
+)
+
 
 ## EDITABLE CODE ##
 # Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
@@ -31,6 +38,10 @@ extinctions = read.csv(
   row.names = 1
   ) # 100% scope
 
+# Load IUCN threat categories
+iucn <- read.csv(
+  "G:/My Drive/patch-pipeline/4_SharedInputData/iucn_data/aves_iucn_2025_nominate.csv"
+)
 
 # Analysis ----
 
@@ -196,6 +207,66 @@ all_ab_int <- 0
 all_ab_mod <- lm(cd_loss_avoided_pc ~ sr_loss_avoided_pc, data = centr_dist_sims)
 all_ab_grad <- all_ab_mod$coefficients[[2]]
 all_ab_int <- all_ab_mod$coefficients[[1]]
+
+# ALTERNATIVE #2 FOR DOTTED LINE
+# Use null simulations to get regression line of colour pattern diversity loss ~ species loss
+# Remove 50, 100, 150, 200, 250, 300, 350 random species and see how colour pattern diversity changes 
+# (actual range of species loss is about 100 - 300 )
+
+# set sample numbers
+n_sample_set <- seq(100, 300, by = 50)
+sr_loss_range <- range(ext_sr_full - ext_sr_values[which(rownames(ext) != "full")])
+n_sample_set <- sample(sr_loss_range[1]:sr_loss_range[2], size = 1000, replace = TRUE)
+#n_sample_set <- sample(100:500, size = 1000, replace = TRUE)
+# n_sample_set <- rnorm(1000, mean = 4000, sd = 1000)
+# get list of species for which we have both extinction and colour data
+spp_list <- colnames(ext)
+
+# Simulate colour pattern diversity loss for given species richness loss samples
+res_random_sample <- lapply(
+  n_sample_set,
+  simulate_cd_loss,
+  spp_list = spp_list,
+  centr_dists = centr_dists, 
+  sex = "M", 
+  n_iter = 1,
+  threatened_spp_only = TRUE,
+  iucn_dat = iucn
+)
+res_random_sample <- as.data.frame(do.call(rbind, res_random_sample))
+
+# view results
+res_random_sample |> 
+  # group_by(sr_loss_abs) |> 
+  # summarise(
+  #   grand_mean_centr_dist = mean(mean_centr_dist),
+  #   grand_mean_cd_loss_abs = mean(mean_cd_loss_abs),
+  #   sd_cd_loss_abs = sd(mean_cd_loss_abs)
+  # ) |> 
+  ggplot(aes(x = sr_loss_abs, y = mean_cd_loss_abs)) + 
+  geom_point() + 
+  # geom_errorbar(aes(ymin = grand_mean_cd_loss_abs - sd_cd_loss_abs, ymax = grand_mean_cd_loss_abs + sd_cd_loss_abs), width = 0.2) + 
+  geom_smooth(method = 'lm', formula= y ~ x)
+# Looks like actually with random species extinction we don't expect ANY increase in loss
+# of colour pattern diversity - how does this fit with the results I have? Does it mean that
+# there's only an increase in colour pattern diversity loss when THREATENED species go extinct,
+# because these are the ones that have higher distance to centroid?
+
+# Convert to SR loss/CD loss AVOIDED by subtracting from baseline (no abatement) scenario
+res_random_sample$sr_loss_avoided_abs <- centr_dist_sims[centr_dist_sims$code == "none", "sr_loss_abs"] - res_random_sample$sr_loss_abs
+res_random_sample$cd_loss_avoided_abs <- centr_dist_sims[centr_dist_sims$code == "none", "mean_cd_loss_abs"] - res_random_sample$mean_cd_loss_abs
+
+res_random_sample |> 
+  # group_by(sr_loss_abs) |> 
+  # summarise(
+  #   grand_mean_centr_dist = mean(mean_centr_dist),
+  #   grand_mean_cd_loss_abs = mean(mean_cd_loss_abs),
+  #   sd_cd_loss_abs = sd(mean_cd_loss_abs)
+  # ) |> 
+  ggplot(aes(x = sr_loss_abs, y = mean_cd_loss_abs)) + 
+  geom_point() + 
+  # geom_errorbar(aes(ymin = grand_mean_cd_loss_abs - sd_cd_loss_abs, ymax = grand_mean_cd_loss_abs + sd_cd_loss_abs), width = 0.2) + 
+  geom_smooth(method = 'lm', formula= y ~ x)
 
 # Now plot the same (percentage centroid distance loss avoided vs percentage species richness loss avoided)
 # but with means instead of full simulation distributions 
