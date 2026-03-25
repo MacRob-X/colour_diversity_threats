@@ -237,7 +237,7 @@ summary(lm_mod)
 write.csv(
   coef(summary(lm_mod)),
   file = here::here(
-    "03_output_data", "03_colour_threats",
+    "03_output_data", "03_colour_threats", "both_sexes",
     "lm_out_centr_dists~ex_driver_allspecies.csv"
   )
 )
@@ -264,7 +264,7 @@ summary(lm_mod_t)
 write.csv(
   coef(summary(lm_mod_t)),
   file = here::here(
-    "03_output_data", "03_colour_threats",
+    "03_output_data", "03_colour_threats", "both_sexes",
     "lm_out_centr_dists~ex_driver_threatenedspecies.csv"
   )
 )
@@ -279,7 +279,7 @@ tukey_lm_t
 write.csv(
   tukey_lm_t$ex_driver,
   file = here::here(
-    "03_output_data", "03_colour_threats",
+    "03_output_data", "03_colour_threats", "both_sexes",
     "tukey_out_centr_dists~ex_driver_threatenedspecies.csv"
   )
 )
@@ -300,6 +300,14 @@ write.csv(
 # run model with no_threats species as the baseline value
 lm_mod_m <- lm(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "M", ])
 summary(lm_mod_m)
+# save output as csv
+write.csv(
+  coef(summary(lm_mod_m)),
+  file = here::here(
+    "03_output_data", "03_colour_threats", "male",
+    "lm_out_centr_dists~ex_driver_allspecies_male.csv"
+  )
+)
 # Species threatened by most extinction drivers, with the exception of Pollution and Other 
 # significant drivers tend to have higher distance to centroid than species with no threats
 # post-hoc Tukey test
@@ -312,6 +320,14 @@ tukey_lm_m
 # run model with no_sig_threats species as the baseline value
 lm_mod_t_m <- lm(centr_dists ~ ex_driver, data = threat_centr_threatened[threat_centr_threatened$sex == "M", ])
 summary(lm_mod_t_m)
+# save output as csv
+write.csv(
+  coef(summary(lm_mod_t_m)),
+  file = here::here(
+    "03_output_data", "03_colour_threats", "male",
+    "lm_out_centr_dists~ex_driver_threatenedspecies_male.csv"
+  )
+)
 # In threatened species, those  threatened by Hunting & collection (but not Accidental mortality) 
 # tend to have higher distance to centroid than species with no SIGNIFICANT threats
 # post-hoc Tukey test
@@ -335,6 +351,14 @@ tukey_lm_t_m
 # run model with no_threats species as the baseline value
 lm_mod_f <- lm(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "F", ])
 summary(lm_mod_f)
+# save output as csv
+write.csv(
+  coef(summary(lm_mod_f)),
+  file = here::here(
+    "03_output_data", "03_colour_threats", "female",
+    "lm_out_centr_dists~ex_driver_allspecies_female.csv"
+  )
+)
 # Species threatened by ANY of the extinction drivers, and those threatened by non-significant drivers,
 # all tend to have higher distance to centroid than species with no threats
 # post-hoc Tukey test
@@ -347,6 +371,14 @@ tukey_lm_f
 # run model with no_sig_threats species as the baseline value
 lm_mod_t_f <- lm(centr_dists ~ ex_driver, data = threat_centr_threatened[threat_centr_threatened$sex == "F", ])
 summary(lm_mod_t_f)
+# save output as csv
+write.csv(
+  coef(summary(lm_mod_t_f)),
+  file = here::here(
+    "03_output_data", "03_colour_threats", "female",
+    "lm_out_centr_dists~ex_driver_threatenedspecies_female.csv"
+  )
+)
 # In threatened species, those  threatened by Hunting & collection and Accidental mortality 
 # tend to have higher distance to centroid than species with no SIGNIFICANT threats
 # There's also a sub-significant tendency for species threatened by climate change to have 
