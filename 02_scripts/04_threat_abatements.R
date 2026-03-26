@@ -71,12 +71,18 @@ centr_dists <- centr_dists[centr_dists$species %in% colnames(ext), ]
 ext <- ext[, order(colnames(ext))]
 centr_dists <- centr_dists[order(centr_dists$species), ]
 
+# convert to true matrix
+ext <- as.matrix(ext)
+
 # Remove the 'full' (extant) row from the extinction matrix
 # ext = ext[rownames(ext) != "full", ]
 
 # get extinction matrix with centroid distances as values, with NA if species are extinct
 # separately for males and females
-ext_centr_matrix_m <- as.data.frame(t(t(as.matrix(ext)) * as.vector(centr_dists[centr_dists$sex == "M", "centr_dists"])))
+cd_vector <- centr_dists[centr_dists$sex == "M", "centr_dists"]
+# multiple extinction matrix by centroid distance vector (this is an optimised way to run this
+# matrix/vector calculation)
+ext_centr_matrix_m <- sweep(ext, 2, cd_vector, `*`)
 ext_centr_matrix_m[ext_centr_matrix_m == 0] <- NA
 # I can now use rowMeans to get the mean distance to centroid in
 # each scenario, which I can compare to the baseline
