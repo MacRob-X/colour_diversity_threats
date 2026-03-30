@@ -195,6 +195,9 @@ threat_colour <- threat_matrix |>
 threat_colour_clean <- threat_colour |> 
   distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
 
+# remove duplicates based on extinction driver
+threat_colour_clean <- threat_colour_clean |> 
+  distinct(ex_driver, jetz_species, sex, .keep_all = TRUE)
 
 # Pivot longer, so we can facet by PC axis
 threat_colour_long <- threat_colour_clean |> 
@@ -203,9 +206,6 @@ threat_colour_long <- threat_colour_clean |>
     names_to = "PC",
     values_to = "PC_value"
   ) 
-
-
-# Plotting ----
 
 # get threat data with UMAP axes
 umap_sppsex <- data.frame(species = sapply(strsplit(rownames(umap), split = "-"), "[", 1),
@@ -226,12 +226,19 @@ threat_umap <- threat_matrix |>
 threat_umap_clean <- threat_umap |> 
   distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
 
+# remove duplicates based on extinction driver
+threat_umap_clean <- threat_umap_clean |> 
+  distinct(ex_driver, jetz_species, sex, .keep_all = TRUE)
+
 # add PC values
 threat_umap_clean <- threat_umap_clean |> 
   inner_join(
     colour_space_sppsex,
     by = c("jetz_species" = "species", "sex" = "sex")
   )
+
+
+# Plotting ----
 
 
 # Proportional 2D density plots (The Juice) ----
@@ -301,7 +308,7 @@ if((n_plots %% n_rows) == 0){
 png(
   filename = here::here(
     "04_output_plots", "06_pc_axes_threats", "01_proportional_density_plots",
-    paste0("extinction_drivers_vs_all_species_", space, "_", ax_1, ax_2, ".png")
+    paste0("extinction_drivers_vs_threatened_species_", space, "_", ax_1, ax_2, ".png")
   ), 
   width = 210, height = 297,
   units = "mm",
@@ -339,7 +346,7 @@ threat_umap_clean |>
   # filter(
   #   ex_driver != "all"
   # ) |> 
-  ggplot(aes(x = X1, y = X2)) + 
+  ggplot(aes(x = UMAP1, y = UMAP2)) + 
   geom_density_2d_filled() + 
   facet_wrap(~ ex_driver)
 
@@ -500,221 +507,161 @@ ggpubr::annotate_figure(
 
 # Statistics ----
 
-# Perform a Cramer-von Mises test to check for difference in distribution of PC1 values between 
-# species threatened by hunting and collection and species not threatened by hunting and collection
-# Exclude LC species
-
-pc_axis <- "PC1"
-focal_driver <- "hunt_col"
-
-focal_distrib <- threat_colour_long |> 
-  filter(
-    iucn_cat != "LC", 
-    PC == pc_axis, 
-    ex_driver == focal_driver
-    ) |> 
-  pull(PC_value)
-non_focal_distrib <- threat_colour_long |> 
-  filter(
-    iucn_cat != "LC", 
-    PC == pc_axis, 
-    ex_driver != focal_driver
-    ) |> 
-  pull(PC_value)
-
-cvm <- twosamples::cvm_test(
-  a = focal_distrib,
-  b = non_focal_distrib,
-)
-cvm
-plot(cvm)
-
-# Calculate Standard Effect Size of CVM test statistic by randomly sampling from the
-# non-hunting&collection distribution 
-# Note that I think this is essentially what twosamples::cvm_test does under the hood anyway
-# first calculate CVM test statistic for the observed distribution
-cvm_obs <- twosamples::cvm_stat(
-  a = focal_distrib,
-  b = non_focal_distrib,
-)
-all_distrib <- threat_colour_long |> 
-  filter(
-    iucn_cat != "LC",
-    PC == pc_axis
-  ) |> 
-  pull(PC_value)
-random_samples <- lapply(1:2000, 
-                         function(i){
-                           sample(
-                             all_distrib,
-                             size = length(focal_distrib),
-                             replace = FALSE
-                           )
-                         }
-                         ) 
-cvm_stats_random <- unlist(
-  lapply(
-    random_samples,
-    function(sample){
-      cvm <- twosamples::cvm_stat(
-        a = sample,
-        b = non_focal_distrib,
-      )
-      return(cvm)
-    }
-  )
-)
-
-# Now calculate SES by calculating (obs - mean(null)) / sd(null)
-# SES > 1.96 indicates deviation from difference between distributions expected by chance
-ses <- (cvm_obs - mean(cvm_stats_random)) / sd(cvm_stats_random)
-# plot histogram of random sample distribution with abserved value as red dotted line
-hist(cvm_stats_random, breaks = 50)
-abline(v = cvm_obs, col = "red")
-# compare with the bootstrap distribution of twosamples::cvm_test
-plot(cvm)
-# it looks like my SES code is doing essentially the same thing as twosamples::cvm_test
-# So, no need to manually do the random sampling myself - I can let the premade function do it
+# Perform a Cramer-von Mises test to check for difference in distribution of PC values between 
+# species threatened by focal extinction driver and species not threatened by focal driver
+# excludes threatened species for which there is
+# no threat data
+# This is the correct thing to do because we cannot say for sure that these threatened species
+# are not threatened by the focal threat
+# It includes species which are threatened by non-significant drivers of extinction, as 
+# determined by Stewart et al 2025 Nat Ecol Evol (see Supplementary_Dataset.xlsx for details)
 
 
-
-# Now apply across each extinction driver and PC
+# apply across each extinction driver and PC
 # could parallelise this but it only takes ~30s for 7 axes
 # define threat types and focal PCs first 
 threat_types <- c(hab_loss = "hab_loss", hunt_col = "hunt_col", invas_spec = "invas_spec", clim_chan = "clim_chan", pollut = "pollut", acc_mort = "acc_mort")
 pcs <- paste0("PC", 1:7)
 
-# Run across PCs/extinction drivers
-pc_ex_drive_res <- pbapply::pblapply(
-  
-  threat_types,
-  
-  function(threat_type){
-    
-    cvm <- pbapply::pblapply(
-      pcs, 
-      test_pc_threat,
-      threat_colour_long = threat_colour_long,
-      threat = threat_type,
-      n = 1000,
-      seed = 42,
-      return_distrib = FALSE,
-      stat_test = "wass"
-    )
-    names(cvm) <- pcs
-    cvm <- data.table::rbindlist(cvm, idcol = "PC")
-    # Bonferroni correction for p-values
-    # cvm$p_adjusted <- p.adjust(cvm$p_value, method = "bonferroni")
-    return(cvm)
-    
-  }
-  
-)
-pc_ex_drive_res <- do.call(rbind, pc_ex_drive_res)
-# Bonferroni correction for p-values
-pc_ex_drive_res$p_adjusted <- p.adjust(pc_ex_drive_res$p_value, method = "bonferroni")
+# # Run across PCs/extinction drivers
+# pc_ex_drive_res <- pbapply::pblapply(
+#   
+#   threat_types,
+#   
+#   function(threat_type){
+#     
+#     cvm <- pbapply::pblapply(
+#       pcs, 
+#       test_pc_threat,
+#       threat_colour_long = threat_colour_long,
+#       threat = threat_type,
+#       n = 1000,
+#       seed = 42,
+#       return_distrib = FALSE,
+#       stat_test = "wass"
+#     )
+#     names(cvm) <- pcs
+#     cvm <- data.table::rbindlist(cvm, idcol = "PC")
+#     # Bonferroni correction for p-values
+#     # cvm$p_adjusted <- p.adjust(cvm$p_value, method = "bonferroni")
+#     return(cvm)
+#     
+#   }
+#   
+# )
+# pc_ex_drive_res <- do.call(rbind, pc_ex_drive_res)
+# # Bonferroni correction for p-values
+# pc_ex_drive_res$p_adjusted <- p.adjust(pc_ex_drive_res$p_value, method = "bonferroni")
 
 # compare to results just from using twosamples::wass_test (which uses essentially the
 # same permutation test to determine a count-based p-value)
-res_ts <- pbapply::pblapply(
-  
-  threat_types,
-  
-  function(threat_type){
+# ## THIS IS WHAT I SHOULD ACTUALLY USE - no benefit of using my own code to do the same thing
+# and twosamples does the same thing much faster
+sexes <- c("both_sexes")
+res_twosamples <- pbapply::pblapply(
+  sexes,
+  function(sex){
     
-    pc_stats <- pbapply::pblapply(
-      pcs,
-      function(pc_axis){
+    sex_res <- pbapply::pblapply(
+      
+      threat_types,
+      
+      function(threat_type){
         
-        focal_distrib <- threat_colour_long |> 
-          filter(
-            iucn_cat != "LC", 
-            PC == pc_axis, 
-            ex_driver == threat_type
-          ) |> 
-          pull(PC_value)
-        non_focal_distrib <- threat_colour_long |> 
-          filter(
-            iucn_cat != "LC", 
-            PC == pc_axis, 
-            ex_driver != threat_type
-          ) |> 
-          pull(PC_value)
-        
-        test_stat <- twosamples::wass_test(
-          focal_distrib,
-          non_focal_distrib,
-          nboots = 1000,
-          keep.boots = F
+        pc_stats <- pbapply::pblapply(
+          pcs,
+          test_pc_threat_twosamples,
+          threat_colour_long = threat_colour_long,
+          threat_type = threat_type,
+          focal_sex = sex,
+          n_boots = 1000,
+          stat_test = "wass",
+          threatened_spp_only = FALSE
         )
-        test_stat <- as.data.frame(t(as.data.frame(test_stat)))
-        test_stat$PC <- pc_axis
-        return(test_stat)
         
+        threat_res <- do.call(rbind, pc_stats)
       }
-        )
-    
-    threat_res <- do.call(rbind, pc_stats)
+      
+    )
+    sex_res <- data.table::rbindlist(sex_res, idcol = "extinction_driver")
   }
-  
 )
-res_ts <- data.table::rbindlist(res_ts, idcol = "extinction_driver")
-colnames(res_ts) <- c("extinction_driver", "test_stat", "p_value", "PC")
-res_ts <- res_ts |> 
-  select(PC, extinction_driver, test_stat, p_value)
+# format results
+res_twosamples <- do.call(rbind, res_twosamples)
+colnames(res_twosamples) <- c("extinction_driver", "test_stat", "p_value", "PC", "sex")
+res_twosamples <- res_twosamples |> 
+  select(PC, extinction_driver, sex, test_stat, p_value)
 
-ordered_ts_res <- res_ts |> 
-  arrange(p_value)
-ordered_wass_res <- wass_res_new |> 
-  arrange(p_value)
-identical(ordered_ts_res[, c("PC", "extinction_driver")], ordered_wass_res[, c("PC", "extinction_driver")])
-full_res <- ordered_ts_res |> 
-  full_join(
-    ordered_wass_res, by = c("PC", "extinction_driver")
-  )
-plot(p_value.y ~ p_value.x, data = full_res)
-mod <- lm(p_value.y ~ p_value.x, data = full_res)
-mod
-summary(mod)
-# essentially the same p-value order - I'm guessing the tiny amount of variation is because of
-# stochasticity in the permutation testing
-# check that all significant results are significant under both methods, and same for non-significant
-# results
-identical(full_res[full_res$p_value.x < 0.05, ], full_res[full_res$p_value.y < 0.05, ])
-identical(full_res[full_res$p_value.x > 0.05, ], full_res[full_res$p_value.y > 0.05, ])
-
-# same for adjusted p-values
-full_res <- full_res |> 
+# Bonferroni correction for p-values (within sex)
+res_twosamples <- res_twosamples |> 
+  group_by(
+    sex
+  ) |> 
   mutate(
-    p_value.x_adj = p.adjust(p_value.x),
-    p_value.y_adj = p.adjust(p_value.y)
+    p_adjusted = p.adjust(p_value, method = "bonferroni")
   )
-identical(full_res[full_res$p_value.x_adj < 0.05, ], full_res[full_res$p_value.y_adj < 0.05, ])
-identical(full_res[full_res$p_value.x_adj > 0.05, ], full_res[full_res$p_value.y_adj > 0.05, ])
+# NOTE that this is not necessary - I only want to identify which threat types might differentially
+# threaten which PC axes - better to keep the net wide here as the mean shift/variance tests
+# will add an additional filter
 
-
-# inspect results
-pc_ex_drive_res |> 
-  # filter(
-  #   abs(ses) > 1.96
-  # ) |> 
-  arrange(
-    p_adjusted
+# Save results as CSV
+write.csv(
+  res_twosamples,
+  file = here::here(
+    "03_output_data", "06_pc_axes_threats",
+    "PC_ex_driver_wasserstein_distance.csv"
   )
+)
+
+# Comparison to my own function for calculating SES/ES/p-value
+# NOTE that I am no longer using my own function - it does the same thing as the twosamples function
+# and is much slower
+# This code snippet is no longer necessary
+# ordered_ts_res <- res_twosamples |> 
+#   arrange(p_value)
+# ordered_wass_res <- wass_res_new |> 
+#   arrange(p_value)
+# identical(ordered_ts_res[, c("PC", "extinction_driver")], ordered_wass_res[, c("PC", "extinction_driver")])
+# full_res <- ordered_ts_res |> 
+#   full_join(
+#     ordered_wass_res, by = c("PC", "extinction_driver")
+#   )
+# plot(p_value.y ~ p_value.x, data = full_res)
+# mod <- lm(p_value.y ~ p_value.x, data = full_res)
+# mod
+# summary(mod)
+# # essentially the same p-value order - I'm guessing the tiny amount of variation is because of
+# # stochasticity in the permutation testing
+# # check that all significant results are significant under both methods, and same for non-significant
+# # results
+# identical(full_res[full_res$p_value.x < 0.05, ], full_res[full_res$p_value.y < 0.05, ])
+# identical(full_res[full_res$p_value.x > 0.05, ], full_res[full_res$p_value.y > 0.05, ])
+# 
+# # same for adjusted p-values
+# full_res <- full_res |> 
+#   mutate(
+#     p_value.x_adj = p.adjust(p_value.x),
+#     p_value.y_adj = p.adjust(p_value.y)
+#   )
+# identical(full_res[full_res$p_value.x_adj < 0.05, ], full_res[full_res$p_value.y_adj < 0.05, ])
+# identical(full_res[full_res$p_value.x_adj > 0.05, ], full_res[full_res$p_value.y_adj > 0.05, ])
+
+### NOTE 2026-03-25
+### HAVE INCORPORATED SEX-SPECIFIC ANALYSIS UP TO HERE, BUT NEED TO INCORPORATE IT INTO THE BELOW
 
 
 # Keep only the axes for which p-value (from twosamples results) < 0.05
 # Use this because SES is unreliable for skewed distributions of null statistics
-sig_pc_exdrive <- res_ts |> 
+sig_pc_exdrive <- res_twosamples |> 
   filter(
     p_value < 0.05
   )
 sig_combos <- sig_pc_exdrive |> 
   select(
-    PC, extinction_driver
+    PC, extinction_driver, sex
   ) |> 
   mutate(
-    combo = paste(PC, extinction_driver, sep = "_")
+    combo = paste(PC, extinction_driver, sex, sep = "_")
   )
 
 # Test for SPECIFIC distributional differences in each of these axis/threat combinations
@@ -722,36 +669,84 @@ sig_combos <- sig_pc_exdrive |>
 # --> Shift in variance (via Levene's test)
 
 # Mean shift and variance inequality
-# I want to run a t-test  on each significant PC/extinction driver combination, comparing the 
-# distribution of the significant combination with that of the distribution of the same PC values of
-# other threatened species
+# I want to run a t-test and Levene's test on each significant PC/extinction driver combination,
+# comparing the distribution of the significant combination with that of the distribution of the 
+# same PC values of other threatened species
+# Note that this code will NOT work if you want to test sexes separately - only both together
 
-ttest_res <- pbapply::pblapply(
+spec_test_res <- pbapply::pblapply(
   1:nrow(sig_combos),
   function(combo_number){
     
     # define focal combination
     focal_combo <- sig_combos[combo_number, ]
     
-    focal_distrib <- threat_colour_long |> 
+    # filter to threatened species only
+    # NOTE that this excludes species for which ex_driver is NA - this includes species
+    # which truly have no threats (i.e. LC species) AND threatened species for which there is
+    # no threat data
+    # This is the correct thing to do because we cannot say for sure that these threatened species
+    # are not threatened by the focal threat
+    # It includes species which are threatened by non-significant drivers of extinction, as 
+    # determined by Stewart et al 2025 Nat Ecol Evol (see Supplementary_Dataset.xlsx for details)
+    analysis_dat <- threat_colour_long |> 
       filter(
-        iucn_cat != "LC",
+      #  iucn_cat %in% c("CR", "EN", "VU"), 
+        PC == focal_combo$PC,
       ) |> 
       filter(
-        PC == focal_combo$PC,
-        ex_driver == focal_combo$extinction_driver
+        !is.na(ex_driver) | iucn_cat == "LC" # anything that is not listed as NT should have an associated threat since we know they're threatened - so these are rows with missing threat data. Allow LC to have no threats as these might legimitately have no threats
       )
-    non_focal_distrib <- threat_colour_long |> 
-      filter(
-        iucn_cat != "LC"
+    
+    # filter to sex, if required
+    if(focal_combo$sex != "both_sexes"){
+      analysis_dat <- analysis_dat |> 
+        filter(
+          sex == focal_combo$sex
+        )
+    }
+    
+    # Extract distribution of focal threat species and non-focal-threat species
+    focal_rows <- analysis_dat |> 
+      mutate(
+        row_num = row_number()
       ) |> 
       filter(
-        PC == focal_combo$PC,
-        ex_driver != focal_combo$extinction_driver
+        ex_driver == focal_combo$extinction_driver
+      ) |> 
+      pull(
+        row_num
+      )
+    focal_distrib <- analysis_dat[focal_rows, ]
+    non_focal_distrib <- analysis_dat[-focal_rows, ] |> 
+      filter(
+        !(jetz_species %in% unique(focal_distrib$jetz_species))
+      ) |> 
+      distinct(
+        jetz_species, sex, .keep_all = TRUE # get a single row per species/sex - otherwise species with more than one threat will be counted multiple times. only necessary for non-focal species as focal species will by definition only have one (focal) threat
       ) |> 
       mutate(
         ex_driver = "non_focal"
       )
+    # focal_distrib <- threat_colour_long |> 
+    #   filter(
+    #     iucn_cat != "LC",
+    #   ) |> 
+    #   filter(
+    #     PC == focal_combo$PC,
+    #     ex_driver == focal_combo$extinction_driver
+    #   )
+    # non_focal_distrib <- threat_colour_long |> 
+    #   filter(
+    #     iucn_cat != "LC"
+    #   ) |> 
+    #   filter(
+    #     PC == focal_combo$PC,
+    #     ex_driver != focal_combo$extinction_driver
+    #   ) |> 
+    #   mutate(
+    #     ex_driver = "non_focal"
+    #   )
     mod_dat <- focal_distrib |> 
       bind_rows(
         non_focal_distrib
@@ -767,6 +762,9 @@ ttest_res <- pbapply::pblapply(
     # set number of bootstraps
     n <- 1000
     
+    # randomly reassign focal/non-focal extinction driver to generate null distributions of PC value/
+    # extinction driver combinations
+    # Should this sample random male and female pairs rather than random rows?
     null_distribs <- lapply(1:n, 
                             function(i){
                               sample_rows <- sample(
@@ -821,7 +819,8 @@ ttest_res <- pbapply::pblapply(
     
     res <- data.frame(
       PC = focal_combo$PC, 
-      ex_driver = focal_combo$extinction_driver, 
+      ex_driver = focal_combo$extinction_driver,
+      sex = focal_combo$sex,
       mean_shift_obs = obs_t_stat, 
       mean_shift_null_mean = null_t_mean, 
       mean_shift_null_sd = null_t_sd, 
@@ -839,19 +838,19 @@ ttest_res <- pbapply::pblapply(
     
   }
 )
-results <- do.call(rbind, ttest_res)
+spec_test_res <- do.call(rbind, spec_test_res)
 
 # plot significant meanshift drivers
-results |> 
+spec_test_res |> 
   filter(
     mean_shift_p < 0.05
   ) |> 
   ggplot(aes(x = ex_driver, y = mean_shift_es, fill = ex_driver)) + 
   geom_col() + 
-  facet_wrap(~ PC)
+  facet_wrap(~ sex + PC)
 
 # and significant variance inequality drivers
-results |> 
+spec_test_res |> 
   filter(
     var_inequal_p < 0.05
   ) |> 
@@ -860,7 +859,7 @@ results |>
   facet_wrap(~ PC)
 
 # check if inequality of variance SES is associated with mean shift SES
-mod <- lm(abs(mean_shift_ses) ~ abs(var_inequal_ses), data = results)
+mod <- lm(abs(mean_shift_ses) ~ abs(var_inequal_ses), data = spec_test_res)
 summary(mod)
 # no, not associated
 

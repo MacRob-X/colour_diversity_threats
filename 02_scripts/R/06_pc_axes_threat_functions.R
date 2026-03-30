@@ -5,33 +5,44 @@
 # proportional to density of all species
 prop_dens_2d <- function(threat_col_data, focal_threat, x_axis, y_axis, threatened_spp_only = FALSE, n_bins = 200, return_params = FALSE){
   
-  # Get rows corresponding to species threatened by focal threat
-  focal_threat_rows <- which(threat_col_data$ex_driver == focal_threat)
-  # If making proportional to ALL other species, get all other rows
-  if(threatened_spp_only == FALSE){
-    non_focal_threat_rows <- (1:nrow(threat_col_data))[-focal_threat_rows]
-  } else {
-    # If making proportional to all other THREATENED species, get rows of all other 
-    # species for which we have threat data and which are threatened (i.e. not LC)
-    non_focal_threat_rows <- which(threat_col_data$ex_driver != focal_threat & threat_col_data$iucn_cat != "LC")
-    # this will automatically exclude NA rows
+  # make copy of full data, to extract axes limits later
+  full_dat <- threat_col_data
+  
+  # If making proportional to all other THREATENED species, get rows of all  
+  # species for which we have threat data and which are threatened (i.e. not LC or NT)
+  if(threatened_spp_only == TRUE){
+    threat_col_data <- threat_col_data[which(threat_col_data$iucn_cat %in% c("CR", "EN", "VU")), ]
   }
   
+  # add row ID column for subsetting
+  threat_col_data$row_id <- 1:nrow(threat_col_data)
+  
+  # Get rows corresponding to species threatened by focal threat
+  focal_threat_rows <- threat_col_data[which(threat_col_data$ex_driver == focal_threat), ][["row_id"]]
+  # Get rows corresponding to species which are NOT threatened by the focal threat (i.e.,
+  # species which are not in the focal threat rows)
+  non_focal_threat_rows <- threat_col_data[which(!(threat_col_data$jetz_species %in% threat_col_data[focal_threat_rows, ]$jetz_species)), ][["row_id"]]
+  # need to remove duplicates - make sure each species is represented only once per sex, rather
+  # than once per sex per extinction driver
+  non_focal_dat <- threat_col_data[threat_col_data$row_id %in% non_focal_threat_rows, ]
+  non_focal_dat <- dplyr::distinct(non_focal_dat, jetz_species, sex, .keep_all = TRUE)
+  non_focal_threat_rows <- non_focal_dat$row_id
+  
   # Get x and y limits - use the entire range of the x and y axes
-  x_lim <- range(threat_col_data[[x_axis]])
-  y_lim <- range(threat_col_data[[y_axis]])
+  x_lim <- range(full_dat[[x_axis]])
+  y_lim <- range(full_dat[[y_axis]])
   
   # Get 2D density of non-focal rows
   non_focal_2dkd <- MASS::kde2d(
-    x = threat_umap_clean[non_focal_threat_rows, x_axis], 
-    y = threat_umap_clean[non_focal_threat_rows, y_axis],
+    x = threat_col_data[non_focal_threat_rows, x_axis], 
+    y = threat_col_data[non_focal_threat_rows, y_axis],
     n = n_bins,
     lims = c(x_lim, y_lim)
   )
   # Get 2D density of focal rows
   focal_2dkd <- MASS::kde2d(
-    x = threat_umap_clean[focal_threat_rows, x_axis], 
-    y = threat_umap_clean[focal_threat_rows, y_axis],
+    x = threat_col_data[focal_threat_rows, x_axis], 
+    y = threat_col_data[focal_threat_rows, y_axis],
     n = n_bins,
     lims = c(x_lim, y_lim)
   )
@@ -181,6 +192,7 @@ plot_prop_dens_2d <- function(prop_dens_obj, focal_threat = NULL, x_axis = NULL,
 
 # Calculate SES or test statistic of twosamples distributional difference test
 # (e.g. Wasserstein's distance) for a single PC axis and threat
+# OBSOLETE - NOT RUN
 test_pc_threat <- function(pc_axis, threat_colour_long, threat, n = 1000, seed = NULL, return_distrib = TRUE, stat_test = c("cvm", "dts", "wass", "ks", "kuiper", "ad")){
   
   # Set twosamples stats test to use
@@ -353,4 +365,114 @@ test_pc_threat <- function(pc_axis, threat_colour_long, threat, n = 1000, seed =
 plot_cvm_distrib <- function(cvm_res, bins = 30){
   hist(cvm_res$cvm_null, breaks = bins)
   abline(v = cvm_res$cvm_observed, col = "red")
+}
+
+# Test for holistic differences between focal and non-focal distributions using e.g. Wasserstein's
+# distance for a single PC axis and threat
+# This function uses the inbuilt bootstrapping capabilities of twosamples to generate a p-value
+test_pc_threat_twosamples <- function(
+    pc_axis, 
+    threat_colour_long, 
+    threat_type, 
+    focal_sex = "both_sexes", 
+    n_boots = 1000, 
+    stat_test = c("cvm", "dts", "wass", "ks", "kuiper", "ad"), 
+    threatened_spp_only = FALSE){
+  
+  # Set twosamples stats test to use
+  stat_func <- switch(
+    stat_test,
+    "cvm" = twosamples::cvm_test,
+    "dts" = twosamples::dts_test,
+    "wass" = twosamples::wass_test,
+    "ks"  = twosamples::ks_test,
+    "kuiper" = twosamples::kuiper_test,
+    "ad"  = twosamples::ad_test,
+    stop("Error: Invalid test type specified. Choose 'cvm', 'wass', 'dts', 'ks', 'kuiper' or 'ad'.")
+  )
+  
+  # filter to threatened species only
+  # NOTE that this excludes species for which ex_driver is NA - this includes species
+  # which truly have no threats (i.e. LC species) AND threatened species for which there is
+  # no threat data
+  # This is the correct thing to do because we cannot say for sure that these threatened species
+  # are not threatened by the focal threat
+  # It includes species which are threatened by non-significant drivers of extinction, as 
+  # determined by Stewart et al 2025 Nat Ecol Evol (see Supplementary_Dataset.xlsx for details)
+  if(threatened_spp_only == TRUE){
+    analysis_dat <- threat_colour_long |> 
+      filter(
+        iucn_cat %in% c("CR", "EN", "VU"), 
+        PC == pc_axis
+      ) |> 
+      filter(
+        !is.na(ex_driver)
+      )
+  } else {
+    # if not using threatened species only, still filter out threatened species for which there is
+    # no threat data
+    # Again, we cannot say for sure that these threatened species are not threatened by the 
+    # focal threat
+    analysis_dat <- threat_colour_long |> 
+      filter(
+        PC == pc_axis
+      ) |> 
+      filter(
+        !is.na(ex_driver) | iucn_cat == "LC" # anything that is not listed as NT should have an associated threat since we know they're threatened - so these are rows with missing threat data 
+      )
+  }
+  
+  
+  # Filter to sex of interest if specific sex requested
+  if(focal_sex != "both_sexes"){
+    analysis_dat <- analysis_dat |> 
+      filter(
+        sex == focal_sex
+      )
+  }
+  
+  
+  # Extract distribution of focal threat species and non-focal-threat species
+  focal_rows <- analysis_dat |> 
+    mutate(
+      row_num = row_number()
+    ) |> 
+    filter(
+      ex_driver == threat_type
+    ) |> 
+    pull(
+      row_num
+    )
+  focal_distrib <- analysis_dat[focal_rows, ]
+  non_focal_distrib <- analysis_dat[-focal_rows, ] |> 
+    filter(
+      !(jetz_species %in% unique(focal_distrib$jetz_species))
+    )
+  # get a single row per species/sex - otherwise species with more than one threat will be counted
+  # multiple times
+  # only necessary for non-focal species as focal species will by definition only have one (focal) 
+  # threat
+  non_focal_distrib <- non_focal_distrib |> 
+    distinct(
+      jetz_species, sex, .keep_all = TRUE
+    )
+  
+  # extract pc values
+  focal_distrib <- focal_distrib[["PC_value"]]
+  non_focal_distrib <- non_focal_distrib[["PC_value"]]
+  
+
+  # Calculate test statistic with count-based p-value
+  test_stat <- stat_func(
+    a = focal_distrib,
+    b = non_focal_distrib,
+    nboots = n_boots,
+    keep.boots = F
+  )
+  test_stat <- as.data.frame(t(as.data.frame(test_stat)))
+  test_stat$PC <- pc_axis
+  test_stat$sex <- focal_sex
+  
+  return(test_stat)
+  
 }
