@@ -246,8 +246,8 @@ threat_umap_clean <- threat_umap_clean |>
 # set focal extinction driver
 focal_threat <- "hunt_col"
 # set axes (PCs or UMAP axes)
-ax_1 <- "PC1"
-ax_2 <- "PC2"
+ax_1 <- "PC7"
+ax_2 <- "PC8"
 
 # Get proportional density of species threatened by focal threat vs ALL other species
 prop_dens <- prop_dens_2d(
@@ -255,6 +255,7 @@ prop_dens <- prop_dens_2d(
   focal_threat = focal_threat,
   x_axis = ax_1, y_axis = ax_2,
   threatened_spp_only = FALSE,
+  vs = "all_species",
   n_bins = 200,
   return_params = TRUE
 )
@@ -266,6 +267,15 @@ plot_prop_dens_2d(
 )
 
 # Plot multiple threats together
+# Set vs parameter
+# Either 'all_species' to plot density of species threatened by focal threat proportional to
+# all other species (to see how the denisty of the threat differs from the original density of the 
+# space) or 'other_species' to plot density of species threatened by focal threat proportional to
+# species NOT threatened by the focal threat (i.e. excluding the focal species, to see how the 
+# density of the threat differs from the density of the rest of the species)
+# Actually the difference between these methods is very minor, at least when not restricting
+# to threatened species only
+vs_par <- "other_species"
 ex_drivers <- c("clim_chan", "hab_loss", "pollut", "hunt_col", "acc_mort", "invas_spec")
 names(ex_drivers) <- ex_drivers
 # First get the proportional densities
@@ -278,6 +288,7 @@ prop_densities <- pbapply::pblapply(
       focal_threat = driver,
       x_axis = ax_1, y_axis = ax_2,
       threatened_spp_only = FALSE,
+      vs = vs_par,
       n_bins = 200,
       return_params = TRUE
     )
@@ -308,7 +319,7 @@ if((n_plots %% n_rows) == 0){
 png(
   filename = here::here(
     "04_output_plots", "06_pc_axes_threats", "01_proportional_density_plots",
-    paste0("extinction_drivers_vs_threatened_species_", space, "_", ax_1, ax_2, ".png")
+    paste0("extinction_drivers_vs_", vs_par, "_", space, "_", ax_1, ax_2, ".png")
   ), 
   width = 210, height = 297,
   units = "mm",
@@ -558,6 +569,7 @@ pcs <- paste0("PC", 1:7)
 # ## THIS IS WHAT I SHOULD ACTUALLY USE - no benefit of using my own code to do the same thing
 # and twosamples does the same thing much faster
 sexes <- c("both_sexes")
+threatened_spp_only_par <- FALSE
 res_twosamples <- pbapply::pblapply(
   sexes,
   function(sex){
@@ -576,7 +588,7 @@ res_twosamples <- pbapply::pblapply(
           focal_sex = sex,
           n_boots = 1000,
           stat_test = "wass",
-          threatened_spp_only = FALSE
+          threatened_spp_only = threatened_spp_only_par
         )
         
         threat_res <- do.call(rbind, pc_stats)
@@ -605,11 +617,18 @@ res_twosamples <- res_twosamples |>
 # will add an additional filter
 
 # Save results as CSV
+# set filename based on parameters
+if(threatened_spp_only_par == TRUE){
+  wass_filename <- "PC_ex_driver_wasserstein_distance_threatened_spp_only.csv"
+} else if(threatened_spp_only_par == FALSE){
+  wass_filename <- "PC_ex_driver_wasserstein_distance_all_spp.csv"
+}
+
 write.csv(
   res_twosamples,
   file = here::here(
     "03_output_data", "06_pc_axes_threats",
-    "PC_ex_driver_wasserstein_distance.csv"
+    wass_filename
   )
 )
 
@@ -676,169 +695,30 @@ sig_combos <- sig_pc_exdrive |>
 
 spec_test_res <- pbapply::pblapply(
   1:nrow(sig_combos),
-  function(combo_number){
-    
-    # define focal combination
-    focal_combo <- sig_combos[combo_number, ]
-    
-    # filter to threatened species only
-    # NOTE that this excludes species for which ex_driver is NA - this includes species
-    # which truly have no threats (i.e. LC species) AND threatened species for which there is
-    # no threat data
-    # This is the correct thing to do because we cannot say for sure that these threatened species
-    # are not threatened by the focal threat
-    # It includes species which are threatened by non-significant drivers of extinction, as 
-    # determined by Stewart et al 2025 Nat Ecol Evol (see Supplementary_Dataset.xlsx for details)
-    analysis_dat <- threat_colour_long |> 
-      filter(
-      #  iucn_cat %in% c("CR", "EN", "VU"), 
-        PC == focal_combo$PC,
-      ) |> 
-      filter(
-        !is.na(ex_driver) | iucn_cat == "LC" # anything that is not listed as NT should have an associated threat since we know they're threatened - so these are rows with missing threat data. Allow LC to have no threats as these might legimitately have no threats
-      )
-    
-    # filter to sex, if required
-    if(focal_combo$sex != "both_sexes"){
-      analysis_dat <- analysis_dat |> 
-        filter(
-          sex == focal_combo$sex
-        )
-    }
-    
-    # Extract distribution of focal threat species and non-focal-threat species
-    focal_rows <- analysis_dat |> 
-      mutate(
-        row_num = row_number()
-      ) |> 
-      filter(
-        ex_driver == focal_combo$extinction_driver
-      ) |> 
-      pull(
-        row_num
-      )
-    focal_distrib <- analysis_dat[focal_rows, ]
-    non_focal_distrib <- analysis_dat[-focal_rows, ] |> 
-      filter(
-        !(jetz_species %in% unique(focal_distrib$jetz_species))
-      ) |> 
-      distinct(
-        jetz_species, sex, .keep_all = TRUE # get a single row per species/sex - otherwise species with more than one threat will be counted multiple times. only necessary for non-focal species as focal species will by definition only have one (focal) threat
-      ) |> 
-      mutate(
-        ex_driver = "non_focal"
-      )
-    # focal_distrib <- threat_colour_long |> 
-    #   filter(
-    #     iucn_cat != "LC",
-    #   ) |> 
-    #   filter(
-    #     PC == focal_combo$PC,
-    #     ex_driver == focal_combo$extinction_driver
-    #   )
-    # non_focal_distrib <- threat_colour_long |> 
-    #   filter(
-    #     iucn_cat != "LC"
-    #   ) |> 
-    #   filter(
-    #     PC == focal_combo$PC,
-    #     ex_driver != focal_combo$extinction_driver
-    #   ) |> 
-    #   mutate(
-    #     ex_driver = "non_focal"
-    #   )
-    mod_dat <- focal_distrib |> 
-      bind_rows(
-        non_focal_distrib
-      ) |> 
-      select(
-        PC, ex_driver, PC_value
-      )
-    
-    # calculate observed t statistic (for mean shift) and Levene's test (for variance inequality)
-    obs_t_stat <- t.test(PC_value ~ ex_driver, data = mod_dat)$statistic
-    obs_f_val <- suppressWarnings(car::leveneTest(PC_value ~ ex_driver, data = mod_dat)["group", "F value"])
-    
-    # set number of bootstraps
-    n <- 1000
-    
-    # randomly reassign focal/non-focal extinction driver to generate null distributions of PC value/
-    # extinction driver combinations
-    # Should this sample random male and female pairs rather than random rows?
-    null_distribs <- lapply(1:n, 
-                            function(i){
-                              sample_rows <- sample(
-                                1:nrow(mod_dat),
-                                size = length(focal_distrib$PC_value),
-                                replace = FALSE
-                              )
-                              sample_distrib <- mod_dat[, c("ex_driver", "PC_value")]
-                              sample_distrib[sample_rows, "ex_driver"] <- focal_combo$extinction_driver
-                              sample_distrib[-sample_rows, "ex_driver"] <- "non_focal"
-                              return(sample_distrib)
-                            }
-    )
-    
-    # Get null distribution of t statistics
-    null_t_stats <- unlist(
-      lapply(
-        null_distribs,
-        function(sample){
-          null_t_stat <- t.test(PC_value ~ ex_driver, data = sample)$statistic
-          return(null_t_stat)
-        }
-      )
-    )
-    # Calculate SES for t statistics
-    null_t_mean <- mean(null_t_stats)
-    null_t_sd <- sd(null_t_stats)
-    mean_shift_es <- obs_t_stat - null_t_mean
-    mean_shift_ses <- mean_shift_es / null_t_sd
-    
-    # Calculate p-value for t statistics
-    p_val_t <- (length(which(abs(null_t_stats) >= abs(obs_t_stat))) + 1) / (n + 1)
-    
-    # Get null distribution of F values
-    null_f_vals <- unlist(
-      lapply(
-        null_distribs,
-        function(sample){
-          null_f_val <- suppressWarnings(car::leveneTest(PC_value ~ ex_driver, data = sample)["group", "F value"])
-          return(null_f_val)
-        }
-      )
-    )
-    # Calculate SES for F values
-    null_f_mean <- mean(null_f_vals)
-    null_f_sd <- sd(null_f_vals)
-    var_inequal_es <- obs_f_val - null_f_mean
-    var_inequal_ses <- var_inequal_es / null_f_sd
-    
-    # Calculate p-value for F values
-    p_val_f <- (length(which(null_f_vals >= obs_f_val)) + 1) / (n + 1)
-    
-    res <- data.frame(
-      PC = focal_combo$PC, 
-      ex_driver = focal_combo$extinction_driver,
-      sex = focal_combo$sex,
-      mean_shift_obs = obs_t_stat, 
-      mean_shift_null_mean = null_t_mean, 
-      mean_shift_null_sd = null_t_sd, 
-      mean_shift_es = mean_shift_es,
-      mean_shift_ses = mean_shift_ses,
-      mean_shift_p = p_val_t,
-      var_inequal_obs = obs_f_val, 
-      var_inequal_null_mean = null_f_mean, 
-      var_inequal_sd = null_f_sd, 
-      var_inequal_es = var_inequal_es,
-      var_inequal_ses = var_inequal_ses,
-      var_inequal_p = p_val_f)
-    
-    return(res)
-    
-  }
+  ttest_levenetest_pc_threat,
+  sig_combos_df = sig_combos, # this gives us the PC axis, threat type and focal sex
+  threat_colour_long = threat_colour_long,
+  n_boots = 1000,
+  threatened_spp_only = threatened_spp_only_par
 )
 spec_test_res <- do.call(rbind, spec_test_res)
+
+# Save results as CSV
+# set filename based on parameters
+if(threatened_spp_only_par == TRUE){
+  spec_filename <- "PC_ex_driver_ttestlevtest_threatened_spp_only.csv"
+} else if(threatened_spp_only_par == FALSE){
+  spec_filename <- "PC_ex_driver_ttestlevtest_all_spp.csv"
+}
+
+write.csv(
+  spec_test_res,
+  file = here::here(
+    "03_output_data", "06_pc_axes_threats",
+    spec_filename
+  ), 
+  row.names = FALSE
+)
 
 # plot significant meanshift drivers
 spec_test_res |> 
@@ -978,32 +858,3 @@ mean_shift_mods <- pbapply::pblapply(
 
 
 
-
-### ALTERNATIVE HIERARCHICAL MODELLING APPROACH ----
-
-# use the clean (non-long data)
-
-# Add an extra column called 'focal' threat - this needs to be specified each time the model is run
-# Here we'll use hunting and collection as the focal variable
-# Remove duplicate rows and also filter out non-threatened (LC) species
-focal_threat <- "hunt_col"
-focal_pc <- "PC3"
-mod_data <- threat_colour_clean |> 
-  mutate(
-    focal_threat = as.factor(ifelse(ex_driver == focal_threat, 1, 0))
-  ) |> 
-  distinct(
-    jetz_species, focal_threat,
-    .keep_all = TRUE
-  ) |> 
-  filter(
-    iucn_cat != "LC"
-  )
-
-# set up model
-form <- formula(get(focal_pc) ~ focal_threat)
-mod <- lm(form, data = mod_data)
-summary(mod)
-# I think this is essentailly just testing for a difference in means between the two groups - 
-# not holistic difference in distribution
-# CONCLUSION: continue with my previous methodology (random resampling combined with CVM test)
