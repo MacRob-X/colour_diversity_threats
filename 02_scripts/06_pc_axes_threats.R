@@ -720,23 +720,87 @@ write.csv(
   row.names = FALSE
 )
 
+# reload results for plotting
+threatened_spp_only_par <- FALSE
+# set filename based on parameters
+if(threatened_spp_only_par == TRUE){
+  spec_filename <- "PC_ex_driver_ttestlevtest_threatened_spp_only.csv"
+} else if(threatened_spp_only_par == FALSE){
+  spec_filename <- "PC_ex_driver_ttestlevtest_all_spp.csv"
+}
+spec_test_res <- read.csv(
+  file = here::here(
+    "03_output_data", "06_pc_axes_threats",
+    spec_filename
+  )
+)
+
 # plot significant meanshift drivers
-spec_test_res |> 
+mean_shift_plot <- spec_test_res |> 
   filter(
     mean_shift_p < 0.05
   ) |> 
   ggplot(aes(x = ex_driver, y = mean_shift_es, fill = ex_driver)) + 
   geom_col() + 
-  facet_wrap(~ sex + PC)
+  facet_wrap(~ PC) + 
+  labs(x = element_blank(), y = "Effect size (mean shift)", fill = "Extinction driver") +
+  theme_bw() + 
+  theme( axis.text.x = element_blank(), # Remove x axis tick labels
+         axis.text.y = element_blank(), # Remove y axis tick labels
+         axis.ticks = element_blank(),  # Remove ticks
+         legend.position = "inside", 
+         legend.title.position = "top",
+         legend.position.inside = c(0.8, 0.15), 
+         legend.direction = "horizontal", 
+         legend.text.position = "bottom") 
+mean_shift_plot
 
 # and significant variance inequality drivers
-spec_test_res |> 
+var_inequal_plot <- spec_test_res |> 
   filter(
     var_inequal_p < 0.05
   ) |> 
   ggplot(aes(x = ex_driver, y = var_inequal_es, fill = ex_driver)) + 
   geom_col() + 
-  facet_wrap(~ PC)
+  facet_wrap(~ PC) + 
+  labs(x = element_blank(), y = "Effect size (variance inequality)", fill = "Extinction driver") +
+  theme_bw() + 
+  theme( axis.text.x = element_blank(), # Remove x axis tick labels
+         axis.text.y = element_blank(), # Remove y axis tick labels
+         axis.ticks = element_blank(),  # Remove ticks
+         legend.position = "inside", 
+         legend.title.position = "top",
+         legend.position.inside = c(0.8, 0.15), 
+         legend.direction = "horizontal", 
+         legend.text.position = "bottom") 
+var_inequal_plot
+
+# save plots
+if(threatened_spp_only_par == TRUE){
+  ms_plot_filename <- "PC_ex_driver_ttestmeanshift_threatened_spp_only.svg"
+  vi_plot_filename <- "PC_ex_driver_levtestvarinequality_threatened_spp_only.svg"
+} else if(threatened_spp_only_par == FALSE){
+  ms_plot_filename <- "PC_ex_driver_ttestmeanshift_all_spp.svg"
+  vi_plot_filename <- "PC_ex_driver_levtestvarinequality_all_spp.svg"
+}
+ggsave(
+  filename = ms_plot_filename,
+  plot = mean_shift_plot, 
+  device = "svg", 
+  path = here::here(
+    "04_output_plots", "06_pc_axes_threats", "02_distributional_differences"
+  ), 
+  width = 180, height = 120, units = "mm"
+)
+ggsave(
+  filename = vi_plot_filename,
+  plot = var_inequal_plot, 
+  device = "svg", 
+  path = here::here(
+    "04_output_plots", "06_pc_axes_threats", "02_distributional_differences"
+  ), 
+  width = 180, height = 120, units = "mm"
+)
 
 # check if inequality of variance SES is associated with mean shift SES
 mod <- lm(abs(mean_shift_ses) ~ abs(var_inequal_ses), data = spec_test_res)
