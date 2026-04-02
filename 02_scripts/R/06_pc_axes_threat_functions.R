@@ -89,7 +89,7 @@ prop_dens_2d <- function(threat_col_data, focal_threat, x_axis, y_axis, threaten
 }
 
 # Plot a single proportional density plot
-plot_prop_dens_2d <- function(prop_dens_obj, focal_threat = NULL, x_axis = NULL, y_axis = NULL, neg_colour = "darkblue", pos_colour = "darkred", plot_contours = FALSE, title = FALSE, max_density_val = NULL){
+plot_prop_dens_2d <- function(prop_dens_obj, focal_threat = NULL, x_axis = NULL, y_axis = NULL, neg_colour = "darkblue", pos_colour = "darkred", plot_contours = FALSE, title = FALSE, max_density_val = NULL, ...){
   
   # Check if only a MASS::kde2d object is provided - if so, need to either provide 
   # focal threat and axes data or set to defaults
@@ -120,6 +120,7 @@ plot_prop_dens_2d <- function(prop_dens_obj, focal_threat = NULL, x_axis = NULL,
     prop_2dkd <- prop_dens_obj$prop_2dkd
     
   }
+  
   
   # Set up colour palette
   # Check if max density value provided (if plotting multiple plots with the same 
@@ -161,6 +162,7 @@ plot_prop_dens_2d <- function(prop_dens_obj, focal_threat = NULL, x_axis = NULL,
     col = col_pal,
     breaks = col_breaks,
     xlab = x_lab, ylab = y_lab, 
+    ...
   )
   
   if(title == TRUE){

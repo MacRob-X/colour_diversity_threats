@@ -246,8 +246,8 @@ threat_umap_clean <- threat_umap_clean |>
 # set focal extinction driver
 focal_threat <- "hunt_col"
 # set axes (PCs or UMAP axes)
-ax_1 <- "PC7"
-ax_2 <- "PC8"
+ax_1 <- "PC1"
+ax_2 <- "PC2"
 
 # Get proportional density of species threatened by focal threat vs ALL other species
 prop_dens <- prop_dens_2d(
@@ -333,7 +333,8 @@ lapply(
   prop_densities,
   plot_prop_dens_2d,
   title = TRUE,
-  max_density_val = global_max_dens
+  max_density_val = global_max_dens,
+  asp = TRUE
 )
 dev.off()
 
