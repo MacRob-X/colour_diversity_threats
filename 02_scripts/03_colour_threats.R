@@ -8,6 +8,8 @@ rm(list=ls())
 library(dplyr)
 library(ggplot2)
 library(ggridges)
+library(MCMCglmm)
+library(brms)
 
 ## EDITABLE CODE ##
 # Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
@@ -35,7 +37,14 @@ threat_matrix <- read.csv(
 colspace_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/1_Raw_PCA/", clade, ".matchedsex.patches.250716.PCAcolspaces.rds")
 colour_space <- readRDS(colspace_path)[["lab"]][["x"]]
 
-# Analysis ----
+# Load phylogeny (distribution of Hackett backbone BirdTree trees)
+phy <- ape::read.tree(
+  here::here(
+    "01_input_data", "First10_AllBirdsHackett1.tre"
+  )
+)
+
+# Data preparation ----
 
 # add second-order threat codes to threat matrix (derived from third-order codes)
 threat_matrix$second_ord_code <- stringr::str_extract(threat_matrix$code, "[^_]*_[^_]*")
@@ -151,6 +160,10 @@ threat_centr <- threat_matrix |>
 threat_centr_clean <- threat_centr |> 
   distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
 
+# remove duplicates based on extinction driver
+threat_centr_clean <- threat_centr |> 
+  distinct(ex_driver, jetz_species, sex, .keep_all = TRUE)
+
 # assign all species with no threats as "no_threats" in the extinction driver column
 threat_centr_clean <- threat_centr_clean |> 
   mutate(
@@ -160,14 +173,42 @@ threat_centr_clean <- threat_centr_clean |>
     ex_driver = factor(ex_driver, levels = c("no_threats", "hab_loss", "invas_spec", "hunt_col", "clim_chan", "acc_mort", "pollut", "other", "no_sig_threats"))
   )
 
+# trim data to only species in phylogeny (should be all of them)
+spp_phy <- phy[[1]]$tip.label
+threat_centr_clean <- threat_centr_clean |> 
+  filter(
+    jetz_species %in% spp_phy
+  )
+
+# trim phylogeny to only species in data
+spp_data <- threat_centr_clean |> 
+  pull(
+    jetz_species
+  ) |> 
+  unique()
+phy <- lapply(
+  phy,
+  ape::drop.tip,
+  tip = setdiff(
+    spp_phy,
+    spp_data
+  )
+)
+
+# Plotting ----
+
 # boxplot of centroid distances by threat type - exclude LC species and 'Other' threats
+# Parameter: restrict to threatened species only? ('threatenedspecies' or 'allspecies')
+threatened_spp_only <- "threatenedspecies"
 bp <- threat_centr_clean |> 
   filter(
     !is.na(sex),
     !is.na(ex_driver),
-    !(iucn_cat %in% c("LC", "NT")),
+#    !(iucn_cat %in% c("LC", "NT")),
 #    ex_driver != "other"
-  ) |> 
+  ) %>% 
+  { if(threatened_spp_only == "threatenedspecies") filter(., !(iucn_cat %in% c("LC", "NT")))
+    else if(threatened_spp_only == "allspecies") .} %>%  # filter to only threatened species
   ggplot(aes(
 #    fill = ex_driver, 
     x = ex_driver, y = centr_dists)) + 
@@ -195,13 +236,92 @@ bp <- threat_centr_clean |>
 
 bp
 
+
+# save plot
+bp_filename <- paste(threatened_spp_only, "centroid_dist_extinction_drivers_boxplot.svg", sep = "_")
 ggsave(
   here::here(
-    "04_output_plots", "01_colour_threats", "threatenedspecies_centroid_dist_extinction_drivers_boxplot.svg"
+    "04_output_plots", "01_colour_threats",
+    bp_filename
   ),
   plot = bp,
   device = "svg",
 )
+
+
+# Statistical analysis ----
+
+## MCMCglmm approach ----
+
+# Note that the distribution of centroid distances is gamma rather than normal (Gaussian)
+# Gamma distributions aren't supported in MCMCglmm but they are in brms, so may be
+# more appropriate to use brms
+# See https://stats.stackexchange.com/questions/653148/negative-binomial-distributed-continuous-data-for-animal-modelling
+
+
+# remove species with missing (NA) threat data (N = 440 rows = 220 species)
+missing_threat_data <- threat_centr_clean |> 
+  filter(
+    is.na(ex_driver)
+  )
+length(unique(missing_threat_data$jetz_species))
+data_mcmcglmm <- threat_centr_clean |> 
+  filter(
+    !is.na(ex_driver)
+  )
+
+### Non-phylogenetic ----
+
+# set seed for reproducibility
+set.seed(42)
+
+# Set G prior for random effects (inverse Wishart)
+g_prior <- list(
+  G = list(
+    G1 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2) # for species (parameter-expanded)
+#    G2 = list(V = 1, nu = 0.002)  # for sex
+    ),
+  R = list(V = 1, nu = 0.002)     # for residuals
+)
+
+nonphylo_mcmcglmm <- MCMCglmm(
+  centr_dists ~ ex_driver + sex,   # log transform to pull in right skew
+  random = ~ jetz_species,
+  prior = g_prior,
+  data = data_mcmcglmm,
+  rcov = ~ units,
+  family = "gaussian",
+  nitt = 70000,
+  thin = 100,
+  burnin = 10000,
+  pl=TRUE,
+  pr=TRUE
+)
+
+# inspect convergence visually
+plot(nonphylo_mcmcglmm)
+
+# inspect results
+summary(nonphylo_mcmcglmm)
+
+
+## brms approach ----
+
+nonphylo_brms <- brm(
+  centr_dists ~ ex_driver + sex,
+  data = data_mcmcglmm,
+  family = Gamma(),
+  iter = 12000,
+  warmup = 2000
+)
+
+
+
+
+
+
+
+
 
 # ANOVA to check if mean centroid distances of each extinction driver are different
 an_m <- aov(centr_dists ~ ex_driver, data = threat_centr_clean[threat_centr_clean$sex == "M", ])
@@ -499,6 +619,10 @@ threat_colour <- threat_matrix |>
 # remove duplicates based on second-order code
 threat_colour_clean <- threat_colour |> 
   distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
+
+# remove duplicates based on extinction driver
+threat_colour_clean <- threat_colour_clean |> 
+  distinct(ex_driver, jetz_species, sex, .keep_all = TRUE)
 
 # boxplot of PC values by threat type - exclude LC species
 # Compare to all threatened species
