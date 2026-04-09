@@ -7,9 +7,10 @@ rm(list=ls())
 # Load libraries ----
 library(dplyr)
 library(ggplot2)
-library(ggridges)
+#library(ggridges)
 library(MCMCglmm)
-library(brms)
+#library(brms)
+library(parallel)
 
 ## EDITABLE CODE ##
 # Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
@@ -40,7 +41,7 @@ colour_space <- readRDS(colspace_path)[["lab"]][["x"]]
 # Load phylogeny (distribution of Hackett backbone BirdTree trees)
 phy <- ape::read.tree(
   here::here(
-    "01_input_data", "First10_AllBirdsHackett1.tre"
+    "01_input_data", "First100_AllBirdsHackett1.tre"
   )
 )
 
@@ -273,7 +274,7 @@ data_mcmcglmm <- threat_centr_clean |>
 ### Non-phylogenetic ----
 
 # set seed for reproducibility
-set.seed(42)
+#set.seed(42)
 
 # Set G prior for random effects (inverse Wishart)
 g_prior <- list(
@@ -285,7 +286,7 @@ g_prior <- list(
 )
 
 nonphylo_mcmcglmm <- MCMCglmm(
-  centr_dists ~ ex_driver + sex,   # log transform to pull in right skew
+  log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
   random = ~ jetz_species,
   prior = g_prior,
   data = data_mcmcglmm,
@@ -301,8 +302,220 @@ nonphylo_mcmcglmm <- MCMCglmm(
 # inspect convergence visually
 plot(nonphylo_mcmcglmm)
 
+# check autocorrelation (0.1 is a good threshold)
+autocorr.diag(nonphylo_mcmcglmm$VCV) # Check for convergence in the random effects (0.1 is a good threshold)
+autocorr(nonphylo_mcmcglmm$Sol[,1:6])  # Check for convergence in the fixed effects
+
 # inspect results
 summary(nonphylo_mcmcglmm)
+# exponentiate posterior means (for interpretation, as response variable log-transformed)
+exp_nonphylo_mcmcglmm_summary <- summary(nonphylo_mcmcglmm)
+exp_nonphylo_mcmcglmm_summary$solutions[, 1:3] <- exp(exp_nonphylo_mcmcglmm_summary$solutions[, 1:3])
+exp_nonphylo_mcmcglmm_summary
+
+# save model
+saveRDS(
+  nonphylo_mcmcglmm,
+  here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "nonphylo_mcmcglmm.RDS"
+  )
+)
+nonphylo_mcmcglmm <- readRDS(
+  here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "nonphylo_mcmcglmm.RDS"
+  )
+)
+
+### Phylogenetic ----
+
+# Duplicate the species names into a new column called 'PhyloName' (for phylogeny
+# random effect)
+data_mcmcglmm$PhyloName <- data_mcmcglmm$jetz_species
+
+# Set up a dummy run
+
+i = 1 #this is arbitrary
+
+tree <- phy[[i]]  # pull a tree from the distribution (number i - starts at one)
+is.ultrametric(tree) # check if tree is ultrametric
+
+animalA <- inverseA(tree)$Ainv # invert covariance matrix for use by MCMCglmm 
+
+# Set G prior for random effects (inverse Wishart)
+g_prior <- list(
+  G = list(
+    G1 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2), # for species (parameter-expanded)
+    G2 = list(V = 1, nu = 0.002)  # for phylogeny
+  ),
+  R = list(V = 1, nu = 0.002)     # for residuals
+)
+
+# set up dummy run iterations depending on number of trees in distribution and
+# desired number of samples per tree
+n_trees <- length(phy)
+n_samples_tree <- 20
+n_samples_tot <- n_samples_tree * n_trees
+dummy_itt <- 22000
+dummy_burnin <- 2000
+dummy_thin <- (dummy_itt - dummy_burnin) / n_samples_tot
+
+# Dummy run
+dummy_mod <- MCMCglmm(
+  log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
+  random = ~ jetz_species + PhyloName,
+  ginverse = list(PhyloName = animalA),
+  prior = g_prior,
+  data = data_mcmcglmm,
+  rcov = ~ units,
+  family = "gaussian",
+  nitt = dummy_itt,
+  thin = dummy_thin,
+  burnin = dummy_burnin,
+  pl=TRUE,
+  pr=TRUE
+)
+
+# phylo_mcmcglmm <- dummy_mod #set up a structure that we'll populate with the real model
+# phylo_mcmcglmm$VCV[((i - 1) * 10 + 1):(i * 10), ] <- dummy_mod$VCV[1:10, ] # [VCV is posterior distrib of covariance matrices]
+# phylo_mcmcglmm$Sol[((i - 1) * 10 + 1):(i * 10), ] <- dummy_mod$Sol[1:10, ] # [Sol is posterior distrib of MME solutions (???) - includes fixed effects]
+# phylo_mcmcglmm$Liab[((i - 1) * 10 + 1):(i * 10), ]<-dummy_mod$Liab[1:10, ] # [Liab is posterior distrib of latent variables]
+
+
+# nsamp.l <- nrow(dummy_mod$VCV)   
+# start1.l = list(R = dummy_mod$VCV[nsamp.l,"units"], G = list(G1 = dummy_mod$VCV[nsamp.l,"PhyloName"])) 
+
+# Create model file to save
+# save(phylo_mcmcglmm, file = here::here(
+#   "03_output_data", "03_colour_threats", "MCMCglmm",
+#   "phylo_mcmcglmm.RDS"
+# ))
+
+
+# set up nitt, thin, burnin
+mod_itt <- dummy_itt + 60000
+mod_burnin <- dummy_burnin
+mod_thin <- (mod_itt - mod_burnin) / n_samples_tree
+
+# parallelised lapply
+
+# set up cluster
+n_cores <- detectCores() -  4
+cl <- makeCluster(n_cores)
+
+# export objects to cluster
+clusterExport(cl, varlist = c("phy", "data_mcmcglmm", "g_prior", "mod_itt", "mod_burnin", "mod_thin"))
+clusterEvalQ(cl, library(MCMCglmm))
+
+# define function for cluster to run
+run_itt <- function(i){
+  
+  # select the ith tree
+  tree <- phy[[i]]
+  
+  animalA <- inverseA(tree)$Ainv
+  
+  mod <- MCMCglmm(
+    log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
+    random = ~ jetz_species + PhyloName,
+    ginverse = list(PhyloName = animalA),
+    prior = g_prior,
+    data = data_mcmcglmm,
+    rcov = ~ units,
+    family = "gaussian",
+    nitt = mod_itt,
+    thin = mod_thin,
+    burnin = mod_burnin,
+    pl=TRUE,
+    pr=TRUE,
+    verbose = FALSE
+  )
+  
+  # return the 10 samples per tree
+  mod_res <- list(
+    VCV = mod$VCV[1:n_samples_tree, ], # [VCV is posterior distrib of covariance matrices]
+    Sol = mod$Sol[1:n_samples_tree, ], # [Sol is posterior distrib of MME solutions (???) - includes fixed effects]
+    Liab = mod$Liab[1:n_samples_tree, ] # [Liab is posterior distrib of latent variables])
+    )
+  return(mod_res)
+  
+}
+
+# parallelise lapply run with parLapply
+mod_res_list <- parLapply(cl, 1:n_trees, run_itt)
+
+# stop cluster
+stopCluster(cl)
+
+# add results into dummy_mod structure
+phylo_mcmcglmm <- dummy_mod
+
+# Combine the results from all cores
+phylo_mcmcglmm$VCV <- as.mcmc(do.call(rbind, lapply(mod_res_list, "[[", "VCV")))
+phylo_mcmcglmm$Sol <- as.mcmc(do.call(rbind, lapply(mod_res_list, "[[", "Sol")))
+phylo_mcmcglmm$Liab <- as.mcmc(do.call(rbind, lapply(mod_res_list, "[[", "Liab")))
+
+# save final combined model
+save(
+  phylo_mcmcglmm, 
+     file = here::here(
+       "03_output_data", "03_colour_threats", "MCMCglmm",
+       "phylo_mcmcglmm.RDS"
+     )
+)
+
+plot(phylo_mcmcglmm)
+
+summary(phylo_mcmcglmm)
+
+
+
+
+for(i in 1:n_trees){
+  
+  # select the ith tree
+  tree <- phy[[i]]
+  
+  animalA <- inverseA(tree)$Ainv
+  
+  mod <- MCMCglmm(
+    log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
+    random = ~ jetz_species + PhyloName,
+    ginverse = list(PhyloName = animalA),
+    prior = g_prior,
+    data = data_mcmcglmm,
+    rcov = ~ units,
+    family = "gaussian",
+    nitt = 7000,
+    thin = 600,
+    burnin = 1000,
+    pl=TRUE,
+    pr=TRUE,
+    verbose = FALSE
+  )
+  
+  print(i) #print which tree you're on (for sanity as the loop runs)
+  
+  phylo_mcmcglmm$VCV[((i - 1) * 10 + 1):(i * 10), ] <- mod$VCV[1:10, ] # [VCV is posterior distrib of covariance matrices]
+  phylo_mcmcglmm$Sol[((i - 1) * 10 + 1):(i * 10), ] <- mod$Sol[1:10, ] # [Sol is posterior distrib of MME solutions (???) - includes fixed effects]
+  phylo_mcmcglmm$Liab[((i - 1) * 10 + 1):(i * 10), ] <- mod$Liab[1:10, ] # [Liab is posterior distrib of latent variables]
+  
+  nsamp.l <- nrow(dummy_mod$VCV)   
+  start1.l = list(R = dummy_mod$VCV[nsamp.l,"units"], G = list(G1 = dummy_mod$VCV[nsamp.l,"PhyloName"])) 
+  
+  if(i == n_trees){
+    
+    save(phylo_mcmcglmm, 
+         file = here::here(
+      "03_output_data", "03_colour_threats", "MCMCglmm",
+      "phylo_mcmcglmm.RDS"
+      )
+    )
+  
+  }
+  
+}
 
 
 ## brms approach ----
@@ -311,12 +524,12 @@ nonphylo_brms <- brm(
   centr_dists ~ ex_driver + sex,
   data = data_mcmcglmm,
   family = Gamma(),
-  iter = 12000,
-  warmup = 2000
+  iter = 1200,
+  warmup = 200
 )
 
-
-
+nonphylo_brms
+plot(nonphylo_brms)
 
 
 
