@@ -4,6 +4,14 @@
 # Clear environment
 rm(list=ls())
 
+# Load custom functions
+source(
+  here::here(
+    "02_scripts", "R", 
+    "03_colour_threats_functions.R"
+  )
+)
+
 # Load libraries ----
 library(dplyr)
 library(ggplot2)
@@ -279,20 +287,20 @@ data_mcmcglmm <- threat_centr_clean |>
 # Set G prior for random effects (inverse Wishart)
 g_prior <- list(
   G = list(
-    G1 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2) # for species (parameter-expanded)
-#    G2 = list(V = 1, nu = 0.002)  # for sex
+    G1 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2), # for species (parameter-expanded)
+    G2 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2)  # for sex
     ),
   R = list(V = 1, nu = 0.002)     # for residuals
 )
 
 nonphylo_mcmcglmm <- MCMCglmm(
-  log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
-  random = ~ jetz_species,
+  log(centr_dists) ~ ex_driver,   # log transform to pull in right skew
+  random = ~ jetz_species + sex,
   prior = g_prior,
   data = data_mcmcglmm,
   rcov = ~ units,
   family = "gaussian",
-  nitt = 70000,
+  nitt = 210000,
   thin = 100,
   burnin = 10000,
   pl=TRUE,
@@ -303,8 +311,9 @@ nonphylo_mcmcglmm <- MCMCglmm(
 plot(nonphylo_mcmcglmm)
 
 # check autocorrelation (0.1 is a good threshold)
+autocorrMCMCglmm(nonphylo_mcmcglmm, 10)
 autocorr.diag(nonphylo_mcmcglmm$VCV) # Check for convergence in the random effects (0.1 is a good threshold)
-autocorr(nonphylo_mcmcglmm$Sol[,1:6])  # Check for convergence in the fixed effects
+autocorr(nonphylo_mcmcglmm$Sol[, 1:10])  # Check for convergence in the fixed effects
 
 # inspect results
 summary(nonphylo_mcmcglmm)
@@ -318,7 +327,7 @@ saveRDS(
   nonphylo_mcmcglmm,
   here::here(
     "03_output_data", "03_colour_threats", "MCMCglmm",
-    "nonphylo_mcmcglmm.RDS"
+    "nonphylo_mcmcglmm_sexrandomeffect.RDS"
   )
 )
 nonphylo_mcmcglmm <- readRDS(
@@ -335,6 +344,9 @@ nonphylo_mcmcglmm <- readRDS(
 data_mcmcglmm$PhyloName <- data_mcmcglmm$jetz_species
 
 # Set up a dummy run
+# this is to obtain a structure to populate with results from runs
+# across each tree - the actual results/convergence of the dummy run
+# model is irrelevant
 
 i = 1 #this is arbitrary
 
@@ -347,6 +359,7 @@ animalA <- inverseA(tree)$Ainv # invert covariance matrix for use by MCMCglmm
 g_prior <- list(
   G = list(
     G1 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2), # for species (parameter-expanded)
+    G2 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2), # for sex (parameter-expanded)
     G2 = list(V = 1, nu = 0.002)  # for phylogeny
   ),
   R = list(V = 1, nu = 0.002)     # for residuals
@@ -357,14 +370,14 @@ g_prior <- list(
 n_trees <- length(phy)
 n_samples_tree <- 20
 n_samples_tot <- n_samples_tree * n_trees
-dummy_itt <- 22000
-dummy_burnin <- 2000
+dummy_itt <- 25000
+dummy_burnin <- 5000
 dummy_thin <- (dummy_itt - dummy_burnin) / n_samples_tot
 
 # Dummy run
 dummy_mod <- MCMCglmm(
-  log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
-  random = ~ jetz_species + PhyloName,
+  log(centr_dists) ~ ex_driver,   # log transform to pull in right skew
+  random = ~ jetz_species + sex + PhyloName,
   ginverse = list(PhyloName = animalA),
   prior = g_prior,
   data = data_mcmcglmm,
@@ -394,7 +407,7 @@ dummy_mod <- MCMCglmm(
 
 
 # set up nitt, thin, burnin
-mod_itt <- dummy_itt + 60000
+mod_itt <- dummy_itt - 15000
 mod_burnin <- dummy_burnin
 mod_thin <- (mod_itt - mod_burnin) / n_samples_tree
 
@@ -405,42 +418,11 @@ n_cores <- detectCores() -  4
 cl <- makeCluster(n_cores)
 
 # export objects to cluster
-clusterExport(cl, varlist = c("phy", "data_mcmcglmm", "g_prior", "mod_itt", "mod_burnin", "mod_thin"))
+clusterExport(cl, varlist = c("phy", "data_mcmcglmm", "g_prior", "mod_itt", "mod_burnin", "mod_thin", "n_samples_tree"))
 clusterEvalQ(cl, library(MCMCglmm))
 
 # define function for cluster to run
-run_itt <- function(i){
-  
-  # select the ith tree
-  tree <- phy[[i]]
-  
-  animalA <- inverseA(tree)$Ainv
-  
-  mod <- MCMCglmm(
-    log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
-    random = ~ jetz_species + PhyloName,
-    ginverse = list(PhyloName = animalA),
-    prior = g_prior,
-    data = data_mcmcglmm,
-    rcov = ~ units,
-    family = "gaussian",
-    nitt = mod_itt,
-    thin = mod_thin,
-    burnin = mod_burnin,
-    pl=TRUE,
-    pr=TRUE,
-    verbose = FALSE
-  )
-  
-  # return the 10 samples per tree
-  mod_res <- list(
-    VCV = mod$VCV[1:n_samples_tree, ], # [VCV is posterior distrib of covariance matrices]
-    Sol = mod$Sol[1:n_samples_tree, ], # [Sol is posterior distrib of MME solutions (???) - includes fixed effects]
-    Liab = mod$Liab[1:n_samples_tree, ] # [Liab is posterior distrib of latent variables])
-    )
-  return(mod_res)
-  
-}
+
 
 # parallelise lapply run with parLapply
 mod_res_list <- parLapply(cl, 1:n_trees, run_itt)
@@ -469,6 +451,13 @@ plot(phylo_mcmcglmm)
 
 summary(phylo_mcmcglmm)
 
+# check autocorrelation
+# fixed effects
+autocorr(phylo_mcmcglmm$Sol[1:10, ])
+# covariance matrices (random effects)
+autocorr(phylo_mcmcglmm$VCV)
+# posterior distrib of latent variables
+autocorr(phylo_mcmcglmm$Liab)
 
 
 
