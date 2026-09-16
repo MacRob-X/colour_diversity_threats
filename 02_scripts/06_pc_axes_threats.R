@@ -244,7 +244,7 @@ threat_umap_clean <- threat_umap_clean |>
 # Proportional 2D density plots (The Juice) ----
 
 # set focal extinction driver
-focal_threat <- "hunt_col"
+focal_threat <- "pollut"
 # set axes (PCs or UMAP axes)
 ax_1 <- "PC1"
 ax_2 <- "PC2"
@@ -265,6 +265,17 @@ prop_dens <- prop_dens_2d(
 plot_prop_dens_2d(
   prop_dens
 )
+
+# plot non-propoartional (raw) density of focal threat species, for comparison
+pollut_dens <- MASS::kde2d(
+  x = threat_umap_clean[which(threat_umap_clean$ex_driver == focal_threat), ax_1], 
+  y = threat_umap_clean[which(threat_umap_clean$ex_driver == focal_threat), ax_2],
+  n = 200,
+  lims = c(range(threat_umap_clean[[ax_1]]), range(threat_umap_clean[[ax_2]]))
+)
+plot_prop_dens_2d(pollut_dens)
+
+
 
 # Plot multiple threats together
 # Set vs parameter
@@ -736,7 +747,7 @@ spec_test_res <- read.csv(
   )
 )
 
-# plot significant meanshift drivers
+# plot significant meanshift drivers - vertical bars
 mean_shift_plot <- spec_test_res |> 
   filter(
     mean_shift_p < 0.05
@@ -756,11 +767,41 @@ mean_shift_plot <- spec_test_res |>
          legend.text.position = "bottom") 
 mean_shift_plot
 
-# and significant variance inequality drivers
+# plot significant meanshift drivers - horizontal bars
+mean_shift_plot <- spec_test_res |> 
+  # filter(
+  #   mean_shift_p < 0.05
+  # ) |> 
+  mutate(
+    signif = ifelse(mean_shift_p < 0.05, "y", "n")
+  ) |> 
+  filter(PC %in% paste0("PC", 1:6)) |> 
+  ggplot(aes(y = ex_driver, x = mean_shift_obs, fill = signif)) + 
+  geom_col() + 
+  geom_vline(xintercept = 0) + 
+  facet_wrap(~ PC, dir = "v") + 
+  labs(y = "Extinction driver", x = paste0("Effect size (mean shift)")) + 
+  scale_y_discrete(
+    labels = c(
+      "pollut" = "Pollution",
+      "invas_spec" = "Invasive species",
+      "hunt_col" = "Hunting & Collection",
+      "hab_loss" =  "Habitat Loss",
+      "clim_chan" =  "Climate Change",
+      "acc_mort" = "Accidental Mortality"
+    )
+  ) + 
+  scale_fill_discrete(palette = c("grey70", "grey25")) + 
+  theme_bw() + 
+  theme(legend.position = "none")
+mean_shift_plot
+
+# and significant variance inequality drivers - vertical bars
 var_inequal_plot <- spec_test_res |> 
   filter(
     var_inequal_p < 0.05
   ) |> 
+  filter(PC %in% paste0("PC", 1:6)) |> 
   ggplot(aes(x = ex_driver, y = var_inequal_es, fill = ex_driver)) + 
   geom_col() + 
   facet_wrap(~ PC) + 
@@ -774,6 +815,36 @@ var_inequal_plot <- spec_test_res |>
          legend.position.inside = c(0.8, 0.15), 
          legend.direction = "horizontal", 
          legend.text.position = "bottom") 
+var_inequal_plot
+
+# horizontal bars
+var_inequal_plot <- spec_test_res |> 
+  # filter(
+  #   var_inequal_p < 0.05
+  # ) |> 
+  mutate(
+    signif = ifelse(var_inequal_p < 0.05, "y", "n"),
+    sd_diff = ifelse(delta_sd > 0, "pos", "neg")
+  ) |> 
+  filter(PC %in% paste0("PC", 1:6)) |> 
+  ggplot(aes(y = ex_driver, x = var_inequal_es, colour = signif, fill = sd_diff)) + 
+  geom_col(linewidth = 1) + 
+  facet_wrap(~ PC) + 
+  labs(y = "Extinction driver", x = "Effect size (variance inequality)") + 
+  scale_y_discrete(
+    labels = c(
+      "pollut" = "Pollution",
+      "invas_spec" = "Invasive species",
+      "hunt_col" = "Hunting & Collection",
+      "hab_loss" =  "Habitat Loss",
+      "clim_chan" =  "Climate Change",
+      "acc_mort" = "Accidental Mortality"
+    )
+  ) +
+  scale_colour_discrete(palette = c(adjustcolor("lightgrey", alpha = 0.0001), "black")) + 
+  scale_fill_discrete(palette = c(adjustcolor("darkblue", alpha = 0.8), adjustcolor("darkred", alpha = 0.8))) +
+  theme_bw() + 
+  theme(legend.position = "none")
 var_inequal_plot
 
 # save plots
@@ -791,7 +862,7 @@ ggsave(
   path = here::here(
     "04_output_plots", "06_pc_axes_threats", "02_distributional_differences"
   ), 
-  width = 180, height = 120, units = "mm"
+  width = 180, height = 140, units = "mm"
 )
 ggsave(
   filename = vi_plot_filename,
@@ -800,8 +871,21 @@ ggsave(
   path = here::here(
     "04_output_plots", "06_pc_axes_threats", "02_distributional_differences"
   ), 
-  width = 180, height = 120, units = "mm"
+  width = 180, height = 140, units = "mm"
 )
+
+
+# compute correlation matrix to see if suites of threats act together
+# in terms of mean shifts
+data_cor <- tidyr::pivot_wider(spec_test_res[, c("PC", "ex_driver", "mean_shift_obs")], names_from = PC, values_from = mean_shift_obs)
+data_cor_rownames <- data_cor$ex_driver
+data_cor <- t(as.matrix(data_cor[, paste0("PC", 1:7)]))
+data_cor[which(is.na(data_cor))] <- 0
+colnames(data_cor) <- data_cor_rownames
+cor_mat_meanshift <- cor(data_cor)
+diag(cor_mat_meanshift) <- NA
+heatmap(cor_mat_meanshift)
+
 
 # check if inequality of variance SES is associated with mean shift SES
 mod <- lm(abs(mean_shift_ses) ~ abs(var_inequal_ses), data = spec_test_res)

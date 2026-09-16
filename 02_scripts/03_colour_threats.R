@@ -19,6 +19,7 @@ library(ggplot2)
 library(MCMCglmm)
 #library(brms)
 library(parallel)
+library(emmeans)
 
 ## EDITABLE CODE ##
 # Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
@@ -288,14 +289,14 @@ data_mcmcglmm <- threat_centr_clean |>
 g_prior <- list(
   G = list(
     G1 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2), # for species (parameter-expanded)
-    G2 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2)  # for sex
+#    G2 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2)  # for sex
     ),
   R = list(V = 1, nu = 0.002)     # for residuals
 )
 
 nonphylo_mcmcglmm <- MCMCglmm(
-  log(centr_dists) ~ ex_driver,   # log transform to pull in right skew
-  random = ~ jetz_species + sex,
+  log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
+  random = ~ jetz_species,
   prior = g_prior,
   data = data_mcmcglmm,
   rcov = ~ units,
@@ -322,18 +323,95 @@ exp_nonphylo_mcmcglmm_summary <- summary(nonphylo_mcmcglmm)
 exp_nonphylo_mcmcglmm_summary$solutions[, 1:3] <- exp(exp_nonphylo_mcmcglmm_summary$solutions[, 1:3])
 exp_nonphylo_mcmcglmm_summary
 
+# pairwise comparisons with emmeans
+# see documentation at 
+# https://cran.r-project.org/web/packages/emmeans/vignettes/basics.html and 
+# https://cran.r-project.org/web/packages/emmeans/vignettes/transformations.html (section "What to do if auto-detection fails")
+# https://github.com/mjskay/tidybayes/issues/120
+
+# for sex as a fixed effect
+# get estimated marginal means
+emm_sexasfixed <- emmeans::emmeans(
+  nonphylo_mcmcglmm_sexasfixed, 
+  ~ ex_driver, 
+  data = data_mcmcglmm,
+  type = "response",
+  tran = "log" # back-transform so the emms are in the original units (distance to centroid), not the log-transformed units that are used in the MCMCglmm model
+  )
+emm_sexasfixed
+# get pairwise comparisons
+pairwise_sexasfixed <- emmeans::contrast(emm_sexasfixed, "pairwise")
+pairwise_sexasfixed
+# save results as CSV
+write.csv(
+  summary(pairwise_sexasfixed),
+  file = here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "pairwise_nonphylo_mcmcglmm_sexasfixed.csv"
+  )
+)
+
+# for sex as a random effect
+# get estimated marginal means
+emm_sexasrandom <- emmeans::emmeans(
+  nonphylo_mcmcglmm_sexasrandom, 
+  ~ ex_driver, 
+  data = data_mcmcglmm,
+  type = "response",
+  tran = "log"
+)
+emm_sexasrandom
+# get pairwise comparisons
+pairwise_sexasrandom <- emmeans::contrast(emm_sexasrandom, "pairwise")
+pairwise_sexasrandom
+# save results as CSV
+write.csv(
+  summary(pairwise_sexasrandom),
+  file = here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "pairwise_nonphylo_mcmcglmm_sexasrandom.csv"
+  )
+)
+
+
 # save model
 saveRDS(
   nonphylo_mcmcglmm,
   here::here(
     "03_output_data", "03_colour_threats", "MCMCglmm",
-    "nonphylo_mcmcglmm_sexrandomeffect.RDS"
+    "nonphylo_mcmcglmm_sexasrandom.RDS"
   )
 )
-nonphylo_mcmcglmm <- readRDS(
+
+# load models
+# sex as random effect
+nonphylo_mcmcglmm_sexasrandom <- readRDS(
   here::here(
     "03_output_data", "03_colour_threats", "MCMCglmm",
-    "nonphylo_mcmcglmm.RDS"
+    "nonphylo_mcmcglmm_sexasrandom.RDS"
+  )
+)
+# sex as fixed effect
+nonphylo_mcmcglmm_sexasfixed <- readRDS(
+  here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "nonphylo_mcmcglmm_sexasfixed.RDS"
+  )
+)
+
+# Save results as CSV table
+write.csv(
+  summary(nonphylo_mcmcglmm_sexasfixed)$solutions,
+  file = here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "nonphylo_mcmcglmm_sexasfixed_results.csv"
+  )
+  )
+write.csv(
+  summary(nonphylo_mcmcglmm_sexasrandom)$solutions,
+  file = here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "nonphylo_mcmcglmm_sexasrandom_results.csv"
   )
 )
 
@@ -359,8 +437,8 @@ animalA <- inverseA(tree)$Ainv # invert covariance matrix for use by MCMCglmm
 g_prior <- list(
   G = list(
     G1 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2), # for species (parameter-expanded)
-    G2 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 25^2), # for sex (parameter-expanded)
-    G2 = list(V = 1, nu = 0.002)  # for phylogeny
+#    G2 = list(V = 1, nu = 1, alpha.mu = 0, alpha.V = 1000), # for sex (parameter-expanded)
+    G3 = list(V = 1, nu = 0.002)  # for phylogeny
   ),
   R = list(V = 1, nu = 0.002)     # for residuals
 )
@@ -370,14 +448,14 @@ g_prior <- list(
 n_trees <- length(phy)
 n_samples_tree <- 20
 n_samples_tot <- n_samples_tree * n_trees
-dummy_itt <- 25000
-dummy_burnin <- 5000
+dummy_itt <- 30000
+dummy_burnin <- 10000
 dummy_thin <- (dummy_itt - dummy_burnin) / n_samples_tot
 
 # Dummy run
 dummy_mod <- MCMCglmm(
-  log(centr_dists) ~ ex_driver,   # log transform to pull in right skew
-  random = ~ jetz_species + sex + PhyloName,
+  log(centr_dists) ~ ex_driver + sex,   # log transform to pull in right skew
+  random = ~ jetz_species + PhyloName,
   ginverse = list(PhyloName = animalA),
   prior = g_prior,
   data = data_mcmcglmm,
@@ -389,6 +467,20 @@ dummy_mod <- MCMCglmm(
   pl=TRUE,
   pr=TRUE
 )
+
+# save dummy model
+saveRDS(
+  dummy_mod,
+  here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "phylo_mcmcglmm_dummy_sexasfixed.RDS"
+  )
+)
+
+# check autocorrelation (0.1 is a good threshold)
+autocorr.diag(dummy_mod$VCV) # Check for convergence in the random effects (0.1 is a good threshold)
+autocorr(dummy_mod$Sol[, 1:9])  # Check for convergence in the fixed effects
+
 
 # phylo_mcmcglmm <- dummy_mod #set up a structure that we'll populate with the real model
 # phylo_mcmcglmm$VCV[((i - 1) * 10 + 1):(i * 10), ] <- dummy_mod$VCV[1:10, ] # [VCV is posterior distrib of covariance matrices]
@@ -405,9 +497,16 @@ dummy_mod <- MCMCglmm(
 #   "phylo_mcmcglmm.RDS"
 # ))
 
+# load dummy model
+dummy_mod <- readRDS(
+  here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "phylo_mcmcglmm_dummy_sexasfixed.RDS"
+  )
+)
 
 # set up nitt, thin, burnin
-mod_itt <- dummy_itt - 15000
+mod_itt <- dummy_itt + 180000
 mod_burnin <- dummy_burnin
 mod_thin <- (mod_itt - mod_burnin) / n_samples_tree
 
@@ -425,7 +524,18 @@ clusterEvalQ(cl, library(MCMCglmm))
 
 
 # parallelise lapply run with parLapply
-mod_res_list <- parLapply(cl, 1:n_trees, run_itt)
+mod_res_list <- parLapply(cl, 
+                          1:n_trees, 
+                          run_itt,
+                          phy = phy,
+                          data_mcmcglmm = data_mcmcglmm,
+                          mod_itt = mod_itt, 
+                          mod_thin = mod_thin, 
+                          mod_burnin = mod_burnin,
+                          n_samples_tree = n_samples_tree,
+                          prior = g_prior
+                          )
+
 
 # stop cluster
 stopCluster(cl)
@@ -439,12 +549,20 @@ phylo_mcmcglmm$Sol <- as.mcmc(do.call(rbind, lapply(mod_res_list, "[[", "Sol")))
 phylo_mcmcglmm$Liab <- as.mcmc(do.call(rbind, lapply(mod_res_list, "[[", "Liab")))
 
 # save final combined model
-save(
+saveRDS(
   phylo_mcmcglmm, 
      file = here::here(
        "03_output_data", "03_colour_threats", "MCMCglmm",
-       "phylo_mcmcglmm.RDS"
+       "phylo_mcmcglmm_sexasfixed.RDS"
      )
+)
+
+# reload, if necessary
+phylo_mcmcglmm <- readRDS(
+  here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "phylo_mcmcglmm_sexasfixed.RDS"
+  ) 
 )
 
 plot(phylo_mcmcglmm)
@@ -453,12 +571,51 @@ summary(phylo_mcmcglmm)
 
 # check autocorrelation
 # fixed effects
-autocorr(phylo_mcmcglmm$Sol[1:10, ])
+autocorr(phylo_mcmcglmm$Sol[, 1:10])
 # covariance matrices (random effects)
 autocorr(phylo_mcmcglmm$VCV)
 # posterior distrib of latent variables
-autocorr(phylo_mcmcglmm$Liab)
+autocorr(phylo_mcmcglmm$Liab[, 1:10])
 
+# Format as MCMC list so I can use Gelman-Rubin diagnostic to see if the
+# runs on the individual trees are reaching the same conclusion
+
+# Check phylogenetic signal
+lambda_distrib <- lamCalc(phylo_mcmcglmm, phylo = "PhyloName", n_levels_fixed = length(unique(data_mcmcglmm$ex_driver)))
+hist(lambda)
+mean(lambda)  # Calculate mean lambda
+HPDinterval(lambda)  # Calculate 95% CIs of lambda
+
+# Save results as CSV
+write.csv(
+  summary(phylo_mcmcglmm)$solutions,
+  file = here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "phylo_mcmcglmm_sexasfixed_results.csv"
+  )
+)
+
+
+# get estimated marginal means
+emm_phylo <- emmeans::emmeans(
+  phylo_mcmcglmm, 
+  ~ ex_driver, 
+  data = data_mcmcglmm,
+  type = "response",
+  tran = "log" # back-transform so the emms are in the original units (distance to centroid), not the log-transformed units that are used in the MCMCglmm model
+)
+emm_phylo
+# get pairwise comparisons
+pairwise_phylo <- emmeans::contrast(emm_phylo, "pairwise")
+pairwise_phylo
+# save results as CSV
+write.csv(
+  summary(pairwise_phylo),
+  file = here::here(
+    "03_output_data", "03_colour_threats", "MCMCglmm",
+    "pairwise_phylo_mcmcglmm_sexasfixed.csv"
+  )
+)
 
 
 for(i in 1:n_trees){
@@ -506,6 +663,96 @@ for(i in 1:n_trees){
   
 }
 
+
+
+### Plot MCMCglmm forest plots ----
+
+# Choose which model to plot
+mod_to_plot <- nonphylo_mcmcglmm_sexasfixed
+
+# extract fixed effects posterior samples (removing sex, species and intercept)
+post_samples <- as.data.frame(mod_to_plot$Sol) |> 
+  tidyr::pivot_longer(
+    cols = everything(),
+    names_to = "param",
+    values_to = "estimate"
+  ) |>
+  filter(
+    !grepl("jetz_species", param),
+    !grepl("sex", param),
+    param != "(Intercept)"
+  ) |> 
+  as.data.frame()
+
+
+# plot violin plot of posterior estimates for each predictor level
+post_samples |> 
+  ggplot(aes(x = estimate, y = param)) + 
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") + 
+  geom_violin(fill = "#4C72B0", colour = "#4C72B0") +
+  stat_summary( # add median and 95% CIs
+    fun.data = median_hilow,
+    fun.args = list(conf.int = 0.95),
+    geom = "pointrange",
+    color = "black",
+    size = 0.6
+  ) +
+  labs(
+    x = "Posterior Estimate (Effect Size)",
+    y = "Extinction Driver"
+  ) +
+  theme_minimal() + 
+  theme(
+    axis.text.y = element_text(size = 10),
+    panel.grid.minor = element_blank()
+  )
+
+# alternative without violin plot (just means and error bars)
+plot_data <- summary(mod_to_plot)$solutions %>% 
+  as.data.frame() %>% 
+  mutate(
+    param = rownames(.)
+  )
+colnames(plot_data) <- c(
+  "post_mean", 
+  "lower_ci",
+  "upper_ci",
+  "eff_samp",
+  "p_mcmc",
+  "param"
+)
+
+plot_data %>% 
+  filter(
+    param != "(Intercept)"
+ #   !grepl("sex", param) 
+  ) %>% 
+  ggplot(aes(x = post_mean, y = param)) + 
+  geom_point(size = 3) + 
+  geom_errorbarh(aes(xmin = lower_ci, xmax = upper_ci), width = 0.2) + 
+  geom_vline(xintercept = 0, linetype = "dashed") + 
+  theme_bw() + 
+  labs(x = "Posterior Estimate (Effect Size)", y = "Extinction Driver")
+
+# tidybayes approach
+library(tidybayes)
+
+mod_to_plot$Sol |> 
+  tidy_draws() |> 
+  tidyr::pivot_longer(
+    cols = -c(.chain, .iteration, .draw),
+    names_to = "param", 
+    values_to = "estimate"
+  ) |> 
+  filter(
+    !grepl("jetz_species", param),
+    !grepl("sex", param),
+    param != "(Intercept)"
+  ) |> 
+  ggplot(aes(x = estimate, y = param)) + 
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") + 
+  stat_halfeye(.width = c(0.80, 0.95), fill = "skyblue", alpha = 0.7) + 
+  theme_minimal()
 
 ## brms approach ----
 
