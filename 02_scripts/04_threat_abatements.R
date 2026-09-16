@@ -46,7 +46,7 @@ iucn <- read.csv(
 # Analysis ----
 
 # calculate distance to centroid from colourspace
-centr_dists <- dispRity::dispRity(colour_space, metric = dispRity::centroids)$disparity[[1]][[1]]
+centr_dists <- dispRity::dispRity(colour_space, metric = c(dispRity::pairwise.dist, mean))$disparity[[1]][[1]]
 centr_dists <- data.frame(
   species = sapply(strsplit(rownames(colour_space), split = "-"), "[", 1),
   sex = sapply(strsplit(rownames(colour_space), split = "-"), "[", 2),
@@ -339,8 +339,30 @@ ggsave(
 )
 
 
-
-
+# Save results as CSV
+res <- centr_dist_sims |> 
+  filter(
+    code != "none",
+    #  code != "all"
+  ) |> 
+  group_by(code) |> 
+  summarise(
+    abs_mean_cd_loss_avoided = mean(cd_loss_avoided_abs),
+    abs_sd_cd_loss_avoided = sd(cd_loss_avoided_abs),
+    abs_mean_sr_loss_avoided = mean(sr_loss_avoided_abs),
+    abs_sd_sr_loss_avoided = sd(sr_loss_avoided_abs),
+    pc_mean_cd_loss_avoided = mean(cd_loss_avoided_pc),
+    pc_sd_cd_loss_avoided = sd(cd_loss_avoided_pc),
+    pc_mean_sr_loss_avoided = mean(sr_loss_avoided_pc),
+    pc_sd_sr_loss_avoided = sd(sr_loss_avoided_pc)
+  )
+write.csv(
+  res,
+  file = here::here(
+    "03_output_data", "04_threat_abatements",
+    "mean_sd_diversity_loss_avoided_specific_abatements.csv"
+  )
+)
 
 
 
