@@ -1,6 +1,132 @@
 # Functions for 03_colour_threats.R script
 
 
+# Assign second order threat types to extinction drivers
+# second order threat types must be in a column named 'second_ord_code'
+assign_ext_drivers <- function(threat_mat){
+  
+  # Check for second order code column
+  assertthat::assert_that(
+    "second_ord_code" %in% colnames(threat_mat),
+    msg = "No column named 'second_ord_code' in threat matrix"
+  )
+  
+  # assign second-order IUCN threat types to grouped 'driver of extinction' categories
+  # same system as Stewart et al 2025 Nat Ecol Evol - grouping is provided in Supplementary Dataset 1
+  # of that paper
+  # There are many threats that aren't assigned to one of these groups - this is because these
+  # threats were non-significant in predicting IUCN threat level in Stewart et al 2025
+  # We assign these as 'FLAG' in case we want to do anything with them later
+  
+  # Groups
+  # Accidental mortality and disturbance
+  acc_mort_codes <- c("4_2", "5_4", "6_3")
+  # Climate change and severe weather
+  clim_chan_codes <- c("11_1", "11_4")
+  # Habitat loss and degradation
+  hab_loss_codes <- c("1_2", "1_3", "2_1", "2_2", "2_3", "5_3", "7_1", "7_2")
+  # Hunting and collecting
+  hunt_col_codes <- "5_1"
+  # Invasive species and disease
+  invas_spec_codes <- c("8_1", "8_2")
+  # Other ["Threats that affected ten or fewer species were grouped with other threats"]
+  other_codes <- c("10_1", "10_2", "10_3", "12_1")
+  # Pollution
+  pollut_codes <- "9_3"
+  
+  threat_mat <- threat_mat |> 
+    mutate(
+      ex_driver = second_ord_code
+    ) |> 
+    mutate( # surely there's a more elegant way to do this
+      ex_driver = ifelse(
+        ex_driver %in% acc_mort_codes,
+        "acc_mort",
+        ifelse(
+          ex_driver %in% clim_chan_codes,
+          "clim_chan",
+          ifelse(
+            ex_driver %in% hab_loss_codes,
+            "hab_loss",
+            ifelse(
+              ex_driver %in% hunt_col_codes,
+              "hunt_col",
+              ifelse(
+                ex_driver %in% invas_spec_codes,
+                "invas_spec",
+                ifelse(
+                  ex_driver %in% other_codes,
+                  "other",
+                  ifelse(
+                    ex_driver %in% pollut_codes,
+                    "pollut",
+                    ifelse(
+                      is.na(ex_driver),
+                      NA,
+                      "FLAG"
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  
+  return(threat_mat)
+  
+}
+
+# Assign second order threat types to binary extinction drivers
+# second order threat types must be in a column named 'second_ord_code'
+assign_binary_ext_drivers <- function(threat_mat){
+  
+  # Check for second order code column
+  assertthat::assert_that(
+    "second_ord_code" %in% colnames(threat_mat),
+    msg = "No column named 'second_ord_code' in threat matrix"
+  )
+  
+  # assign second-order IUCN threat types to grouped 'driver of extinction' categories
+  # same system as Stewart et al 2025 Nat Ecol Evol - grouping is provided in Supplementary Dataset 1
+  # of that paper
+  # There are many threats that aren't assigned to one of these groups - this is because these
+  # threats were non-significant in predicting IUCN threat level in Stewart et al 2025
+  # We assign these as 'FLAG' in case we want to do anything with them later
+  
+  # Groups
+  # Accidental mortality and disturbance
+  acc_mort_codes <- c("4_2", "5_4", "6_3")
+  # Climate change and severe weather
+  clim_chan_codes <- c("11_1", "11_4")
+  # Habitat loss and degradation
+  hab_loss_codes <- c("1_2", "1_3", "2_1", "2_2", "2_3", "5_3", "7_1", "7_2")
+  # Hunting and collecting
+  hunt_col_codes <- "5_1"
+  # Invasive species and disease
+  invas_spec_codes <- c("8_1", "8_2")
+  # Other ["Threats that affected ten or fewer species were grouped with other threats"]
+  other_codes <- c("10_1", "10_2", "10_3", "12_1")
+  # Pollution
+  pollut_codes <- "9_3"
+  
+  threat_mat <- threat_mat |> 
+    mutate( 
+      acc_mort = ifelse(second_ord_code %in% acc_mort_codes, 1, 0),
+      clim_chan = ifelse(second_ord_code %in% clim_chan_codes, 1, 0),
+      hab_loss = ifelse(second_ord_code %in% hab_loss_codes, 1, 0),
+      hunt_col = ifelse(second_ord_code %in% hunt_col_codes, 1, 0),
+      invas_spec = ifelse(second_ord_code %in% invas_spec_codes, 1, 0),
+      other_threats = ifelse(second_ord_code %in% other_codes, 1, 0),
+      pollut = ifelse(second_ord_code %in% pollut_codes, 1, 0),
+      threat_data_missing = ifelse(is.na(second_ord_code) & notes != "no_threats", 1, 0)
+    )
+  
+  return(threat_mat)
+  
+}
+
 # Function to check autocorrelation in first non-zero lag of MCMCglmm fixed effects
 # From MacDonald et al 2024 - Primate coloration and colour vision: a comparative approach (Supporting Information)
 # https://doi.org/10.1093/biolinnean/blad089
