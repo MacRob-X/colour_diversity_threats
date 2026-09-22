@@ -46,6 +46,23 @@ avonet_crosswalk <- read.csv(
   "G:/My Drive/patch-pipeline/4_SharedInputData/avonet/avonet_v7_birdlife-birdtree-crosswalk.csv"
 )
 
+# load HBW/BirdLife taxonomic checklist v10
+bl_10 <- readr::read_csv(
+  here::here(
+    "01_input_data", "birdlife_taxonomic_checklists", "HBW-BirdLife_Checklist_v10_Oct25",
+    "simplified_rxm_digital_checklist_v10.csv"
+  ), 
+  skip_empty_rows = TRUE
+)
+
+# load HBW/BirdLife taxonomic checklist v5.0
+bl_5 <- readr::read_csv(
+  here::here(
+    "01_input_data", "birdlife_taxonomic_checklists", "HBW-BirdLife_Checklist_v5_Dec20",
+    "simplified_rxm_digital_checklist_v5.csv"
+  ),
+  skip_empty_rows = TRUE
+)
 
 # Workflow ----
 
@@ -116,6 +133,188 @@ avonet_crosswalk <- avonet_crosswalk %>%
     species_birdtree = if_else(species_birdtree == "Pampa_curvipennis", "Campylopterus_curvipennis", species_birdtree)
   )
 
+# Check for species in the threat data which don't appear in the AVONET crosswalk
+missing_threat_spp <- threat_species %>% 
+  filter(
+    !(threat_species %in% avonet_crosswalk$species_birdlife)
+  ) %>% 
+  pull(threat_species)
+
+# Some of these are likely to be because AVONET uses HBW/BirdLife digital checklist v5.0 and 
+# IUCN uses a later version 
+# I believe it's version 10 (the latest version as of 2026-09-22, released 2025)
+
+# I can therefore match the names between v5 and v10
+# Just need to replace the IUCN 2023 species names (v10) with their v5.0 names, where possible
+
+# Imported code
+##################################################################################
+
+# v10 - discard rows referring to subspecies
+bl_10 <- bl_10 %>% 
+  filter(
+    is.na(sub_spp_id) # filter out subspecies
+  ) |> 
+  select(
+    -c(authority, alt_common_names, sub_spp_id)
+  ) |> 
+  mutate(
+    species_10 = sub(" ", "_", scientific_name)
+  )
+
+
+# v5.0 - filter out not recognised complexes
+bl_5 <- bl_5 %>% 
+  mutate(
+    species_5 = sub(" ", "_", scientific_name)
+  ) %>% 
+  filter(
+    iucn_cat_5 != "NR",
+    iucn_cat_5 != "UR"
+  ) %>% 
+  select(
+    species_5, sis_rec_id, iucn_cat_5
+  )
+
+# check if there are any species which are in the threat data but not the BL v10 checklist
+extra_threat_spp <- threat_species %>% 
+  filter(
+    !(threat_species %in% bl_10$species_10)
+  ) %>% 
+  pull(threat_species)
+# just 1 species in the threat data but not BL v10 - "Pyrrhulagra_portoricensis"
+
+# This is now known as 'Melopyrrha_portoricensis' in the IUCN Red List (checked on iucnredlist.org,
+# accessed 2026-09-22)
+# It's 'Melopyrrha_portoricensis' in bl v10, so I can just remove 'Pyrrhulagra_portoricensis' row
+# in the threat data as the actual threat data is under 'Melopyrrha_portoricensis'
+threat_species <- threat_species %>% 
+  filter(
+    threat_species != "Pyrrhulagra_portoricensis"
+  )
+threat_matrix <- threat_matrix %>% 
+  filter(
+    binomial_name != "Pyrrhulagra_portoricensis"
+  )
+
+# check if there are any species which are in the avonet crosswalk BL list but not the BL v5.0 checklist
+avonet_crosswalk$species_birdlife[which(!(avonet_crosswalk$species_birdlife %in% bl_5$species_5))]
+# nope, all good - the versions match
+
+# check if there are any species which are in the v5 checklist but only in the v10 checklist as
+# NR species AND are 1_bl_to_1_bt mapping AND do not appear in the threat data - these will not have threat
+# data to assign
+# Note that most of these will NOT cause a problem since this list will include species 
+# which do have threat data but whose scientific name has changed (e.g. Buettikoferella_bivittata/
+# Cincloramphus_bivittatus)
+# I could use the 2020 category I guess?
+problem_species <- avonet_crosswalk[(avonet_crosswalk$species_birdlife %in% bl_5$species_5[!(bl_5$sis_rec_id %in% bl_10$sis_rec_id[bl_10$iucn_cat_10 != "NR"]) & !(bl_5$species_5 %in% threat_species$threat_species)]) & avonet_crosswalk$match_type == "1_bl_to_1_bt", ]
+# there aren't any of these
+rm(problem_species)
+
+
+# join the birdlife v10 checklist to the v5.0 checklist (using SISRecID) and 
+# filter to only the species which are missing from the AVONET crosswalk data
+bl_checklist_match <- bl_5 %>% 
+  full_join(
+    bl_10, by = "sis_rec_id"
+  ) %>% 
+  # filter(
+  #   species_10 %in% missing_birdlife_species | species_50 %in% missing_birdlife_species
+  # ) %>% 
+  select(
+    -c(seq, order, family_name, family, subfamily, tribe, common_name, scientific_name, synonyms, taxonomic_sources, spc_rec_id)
+  )
+
+# check which 5.0 species don't have an 10 name equivalent
+bl_checklist_match %>% 
+  filter(
+    is.na(species_10)
+  )
+
+# All 5.0 species have a 10 equivalent
+
+# identify rows which have duplicated v10 species names
+dupes_sp10 <- bl_checklist_match[bl_checklist_match$species_10 %in% unique(bl_checklist_match$species_10[duplicated(bl_checklist_match$species_10)]), ]
+
+# remove duplicate bl_10 species which have NA bl_5
+duplicated_spp <- unique(bl_checklist_match$species_10[duplicated(bl_checklist_match$species_10)])
+
+for(sp in duplicated_spp){
+  dupe_rows <- bl_checklist_match %>% 
+    filter(
+      species_10 == sp
+    )
+  # remove row if there's a row with corresponding BL v5 name AND rows with no corresponding BL v5 name
+  if(nrow(dupe_rows[!is.na(dupe_rows$species_5), ]) != 0){
+    bl_checklist_match <- bl_checklist_match %>% 
+      filter(
+        !(species_10 == sp & is.na(species_5))
+      )
+  }
+}
+
+# check if any duplicate rows left
+dupes_sp10 <- bl_checklist_match[bl_checklist_match$species_10 %in% unique(bl_checklist_match$species_10[duplicated(bl_checklist_match$species_10)]), ]
+
+# can remove the remaining duplicates if their v10 IUCN cat is NR and they have no v5 species name
+# (as the NR species won't appear in my IUCN threat data)
+duplicated_spp <- unique(bl_checklist_match$species_10[duplicated(bl_checklist_match$species_10)])
+
+for(sp in duplicated_spp){
+  dupe_rows <- bl_checklist_match %>% 
+    filter(
+      species_10 == sp
+    )
+  # remove rows if v10 IUCN cat is NR
+  bl_checklist_match <- bl_checklist_match %>% 
+    filter(
+      !(species_10 == sp & iucn_cat_10 == "NR")
+    )
+  
+}
+
+# check if any duplicate rows left
+dupes_sp10 <- bl_checklist_match[bl_checklist_match$species_10 %in% unique(bl_checklist_match$species_10[duplicated(bl_checklist_match$species_10)]), ]
+# no duplicated rows left - all good. Let's remove the variables
+rm(dupes_sp10, dupe_rows, duplicated_spp, sp)
+
+
+# now use this data to replace the 2026 IUCN threat data species names with the v5.0 species names
+# (don't replace if the v5.0 species name is NA)
+threat_species_v5 <- threat_species %>% 
+  left_join(
+    bl_checklist_match,
+    by = join_by(threat_species == species_10)
+  ) %>% 
+  rename(
+    og_threat_species = threat_species
+  ) %>% 
+  mutate(
+    species_birdlife = ifelse(!is.na(species_5), species_5, og_threat_species)
+  ) %>% 
+  select(
+    -species_5
+  )
+# "species_birdlife" column now has the v5.0 names - original 2023 IUCN names preserved in
+# "species_iucn_2023" column
+
+# add v5 species name column to actual threat matrix
+threat_matrix <- threat_species_v5 %>% 
+  select(
+    og_threat_species,
+    species_birdlife
+  ) %>% 
+  right_join(
+    threat_matrix,
+    join_by("og_threat_species" == "binomial_name")
+  ) %>% 
+  rename(
+    threat_binomial = og_threat_species
+  )
+
+##################################################################################
+
 
 # Match Jetz species to AVONET(using BirdTree = Jetz)
 jetz_avonet <- jetz_species |> 
@@ -127,15 +326,15 @@ jetz_avonet <- jetz_species |>
 # Now match this to the threat data
 jetz_avonet_threat <- jetz_avonet |> 
   left_join(
-    threat_species,
-    by = join_by("species_birdlife" == "threat_species")
+    threat_species_v5,
+    by = "species_birdlife"
   )
 
 # Check what match types exist
 match_types <- unique(jetz_avonet_threat$match_type)
 
 # All the species that are 1-1 matched are fine, we don't need to do anything
-# there are 6806 of these
+# there are 6807 of these
 one_to_one_matched <- jetz_avonet_threat |> 
   filter(
     match_type == "1_bl_to_1_bt"
@@ -416,7 +615,7 @@ final_matched_data <- one_to_one_matched |>
 final_jetz_threat_data <- final_matched_data |> 
   left_join(
     threat_matrix,
-    join_by("species_birdlife" == "binomial_name")
+    "species_birdlife"
   )
 
 # Write to CSV
@@ -433,3 +632,8 @@ write.csv(
   ), 
   row.names = F
 )
+
+
+
+
+
