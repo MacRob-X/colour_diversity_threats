@@ -611,12 +611,126 @@ final_matched_data <- one_to_one_matched |>
     jetz_species, species_birdlife
   )
 
-# And finally, add the threat data to get the finished, matched threat dataset for the Jetz taxonomy
+# Add the threat data to get the matched threat dataset for the Jetz taxonomy
 final_jetz_threat_data <- final_matched_data |> 
   left_join(
     threat_matrix,
     "species_birdlife"
   )
+
+# Check for any Jetz species with missing threat data
+missing_data_spp <- final_jetz_threat_data %>% 
+  filter(
+    is.na(code) & notes != "no_threats"
+  )
+# 6 species - we'll use iucnredlist.org and https://avibase.bsc-eoc.org/ (both accessed 2026-09-23)
+# to see if we can manually assign threat data to these (e.g. if they've been lumped into a single species)
+
+# Jetz: "Cacicus_leucoramphus"
+# This is now subsumed into Cacicus_chrysonotus (iucnredlist.org)
+# Assign it the threat statuses of Cacicus_chrysonotus
+temp_threats <- final_jetz_threat_data %>% 
+  filter(
+    species_birdlife == "Cacicus_chrysonotus"
+  )
+temp_threats$jetz_species <- "Cacicus_leucoramphus"
+final_jetz_threat_data <- final_jetz_threat_data %>% 
+  filter(
+    jetz_species != "Cacicus_leucoramphus"
+  ) %>% 
+  bind_rows(
+    temp_threats
+  )
+
+# Jetz: "Caracara_cheriway"
+# This is now subsumed into Caracara_plancus (iucnredlist.org)
+# Assign it the threat statuses of Caracara_plancus
+temp_threats <- final_jetz_threat_data %>% 
+  filter(
+    species_birdlife == "Caracara_plancus"
+  )
+temp_threats$jetz_species <- "Caracara_cheriway"
+final_jetz_threat_data <- final_jetz_threat_data %>% 
+  filter(
+    jetz_species != "Caracara_cheriway"
+  ) %>% 
+  bind_rows(
+    temp_threats
+  )
+
+# Jetz: "Glaucidium_californicum"
+# This is now subsumed into Glaucidium_gnoma (iucnredlist.org)
+# Assign it the threat statuses of Glaucidium_gnoma
+temp_threats <- final_jetz_threat_data %>% 
+  filter(
+    species_birdlife == "Glaucidium_gnoma"
+  )
+temp_threats$jetz_species <- "Glaucidium_californicum"
+final_jetz_threat_data <- final_jetz_threat_data %>% 
+  filter(
+    jetz_species != "Glaucidium_californicum"
+  ) %>% 
+  bind_rows(
+    temp_threats
+  )
+
+
+# Jetz: "Mirafra_alopex"
+# This is now subsumed into Calendulauda_africanoides (iucnredlist.org)
+# Assign it the threat statuses of Calendulauda_africanoides
+temp_threats <- final_jetz_threat_data %>% 
+  filter(
+    species_birdlife == "Calendulauda_africanoides"
+  )
+temp_threats$jetz_species <- "Mirafra_alopex"
+final_jetz_threat_data <- final_jetz_threat_data %>% 
+  filter(
+    jetz_species != "Mirafra_alopex"
+  ) %>% 
+  bind_rows(
+    temp_threats
+  )
+
+# Jetz: "Ramphocelus_costaricensis"
+# This is now subsumed into Ramphocelus_passerinii (iucnredlist.org)
+# Assign it the threat statuses of Ramphocelus_passerinii
+temp_threats <- final_jetz_threat_data %>% 
+  filter(
+    species_birdlife == "Ramphocelus_passerinii"
+  )
+temp_threats$jetz_species <- "Ramphocelus_costaricensis"
+final_jetz_threat_data <- final_jetz_threat_data %>% 
+  filter(
+    jetz_species != "Ramphocelus_costaricensis"
+  ) %>% 
+  bind_rows(
+    temp_threats
+  )
+
+# Jetz: "Ramphocelus_icteronotus"
+# This is now subsumed into Ramphocelus_flammigerus (iucnredlist.org)
+# Assign it the threat statuses of Ramphocelus_flammigerus
+temp_threats <- final_jetz_threat_data %>% 
+  filter(
+    species_birdlife == "Ramphocelus_flammigerus"
+  )
+temp_threats$jetz_species <- "Ramphocelus_icteronotus"
+final_jetz_threat_data <- final_jetz_threat_data %>% 
+  filter(
+    jetz_species != "Ramphocelus_icteronotus"
+  ) %>% 
+  bind_rows(
+    temp_threats
+  )
+
+
+# Check again for any missing threat data
+# Check for any Jetz species with missing threat data
+missing_data_spp <- final_jetz_threat_data %>% 
+  filter(
+    is.na(code) & notes != "no_threats"
+  )
+# No missing threat data
 
 # Write to CSV
 if(latest == TRUE){
