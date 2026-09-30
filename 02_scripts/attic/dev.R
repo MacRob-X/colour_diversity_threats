@@ -563,3 +563,174 @@ threat_data <- stringr::str_extract(threat_data, "[^_]*_[^_]*") # keep first two
 threat_data <- unique(threat_data)
 
 # now extract species data for all avian species
+
+
+# 2026-09-22 ----
+
+# Recode threat data as binary variables for modelling against centroid distance
+
+# Clear environment
+rm(list=ls())
+
+# Load custom functions
+source(
+  here::here(
+    "02_scripts", "R", 
+    "03_colour_threats_functions.R"
+  )
+)
+
+# Load libraries ----
+library(dplyr)
+library(ggplot2)
+library(parallel)
+
+## EDITABLE CODE ##
+# Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
+latest <- TRUE
+# If not using latest assessment data, specify a cutoff year. Set to NULL if using latest.
+cutoff_year <- NULL
+# Clade to focus on ("Aves", "Neognaths", "Neoaves", "Passeriformes")
+clade <- "Aves"
+
+# Load data ----
+
+# Load threat data (Jetz taxonomy version)
+if(latest == TRUE){
+  jetz_threat_filename <- paste0("jetz_threat_matrix_latest_2026-01-07.csv")
+} else if(latest == FALSE){
+  jetz_threat_filename <- paste("jetz_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
+}
+threat_matrix <- read.csv(
+  file = here::here(
+    "03_output_data", jetz_threat_filename
+  )
+)
+
+# load colour pattern space (created in Chapter 1 - patch-pipeline)
+colspace_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/1_Raw_PCA/", clade, ".matchedsex.patches.250716.PCAcolspaces.rds")
+colour_space <- readRDS(colspace_path)[["lab"]][["x"]]
+
+
+# Data preparation ----
+
+# add second-order threat codes to threat matrix (derived from third-order codes)
+threat_matrix$second_ord_code <- stringr::str_extract(threat_matrix$code, "[^_]*_[^_]*")
+
+# inspect species with missing threat data
+missing_data_spp <- threat_matrix[which(is.na(threat_matrix$second_ord_code) & threat_matrix$notes != "no_threats"),]
+# no missing data species
+rm(missing_data_spp)
+
+# Remove problem taxon (Cecropis hyperythra) 
+# Hirundo_daurica is in there twice, because it corresponds to two BirdLife species
+# but is an 'imperfect match' according to AVONET. It's a slightly complicated one also involving
+# Hirundo_striolata
+# Jetz spp H. striolata and H. daurica correspond to BL spp Cecropis daurica and C. hyperythra
+# but in non-straightforward ways
+# Essentially C. hyperythra only exists in Sri Lanka so is a subpopulation of the daurica/striolata complex
+# The upshot I think is that I just remove the profile for C. hyperythra as in Jetz it is part of 
+# daurica/striolata and these are both threatened by the same threat
+# Each BL species has different threat profile (Cecropis_hyperythra has no threats, Cecropis_daurica
+# is threatened by invasive species)
+# ACTION TAKEN : remove the threat profile of C. hyperythra 
+# This means I'm using the profile of the nominate one, so is in keeping with my approach to taxonomy matching
+# I do this earlier in the pipeline
+threat_matrix <- threat_matrix %>% 
+  filter(
+    species_birdlife != "Cecropis_hyperythra"
+  )
+
+# assign second-order IUCN threat types to grouped 'driver of extinction' categories
+# same system as Stewart et al 2025 Nat Ecol Evol - grouping is provided in Supplementary Dataset 1
+# of that paper
+# There are many threats that aren't assigned to one of these groups - this is because these
+# threats were non-significant in predicting IUCN threat level in Stewart et al 2025
+# We assign these as 'FLAG' in case we want to do anything with them later
+threat_matrix <- assign_ext_drivers(threat_matrix)
+
+# For now, let's make all the flagged threats (i.e. those which are not significant predictors
+# of extinction risk) have "no_sig_threats", as we might want to use them later
+threat_matrix <- threat_matrix |> 
+  mutate(
+    ex_driver = ifelse(
+      ex_driver == "FLAG",
+      "no_sig_threats",
+      ex_driver
+    )
+  )
+
+## NOT RUN
+# DECISION: let's also make ALL threats for non-threatened (i.e., LC) species NA, as we're not
+# interested in threats to LC species
+# threat_matrix <- threat_matrix |>
+#   mutate(
+#     ex_driver = ifelse(
+#       iucn_cat == "LC",
+#       NA,
+#       ex_driver
+#     )
+#   )
+
+# Pivot wider to get binary extinction driver variables
+wide_threat_matrix <- threat_matrix %>% 
+  select(
+    jetz_species,
+    iucn_cat,
+    notes,
+    ex_driver
+  ) %>% 
+  distinct() %>% 
+  mutate(dummy = 1) %>% 
+  tidyr::pivot_wider(
+    names_from = ex_driver, values_from = dummy, values_fill = 0
+  )
+
+
+
+# calculate distance to centroid from colourspace
+centr_dists <- dispRity::dispRity(colour_space, metric = dispRity::centroids)$disparity[[1]][[1]]
+centr_dists <- data.frame(
+  species = sapply(strsplit(rownames(colour_space), split = "-"), "[", 1),
+  sex = sapply(strsplit(rownames(colour_space), split = "-"), "[", 2),
+  centr_dist = centr_dists
+)
+
+# add distance to centroid onto threat matrix
+threat_centr <- wide_threat_matrix |> 
+  inner_join(centr_dists, by = join_by("jetz_species" == "species"))
+# this throws a warning but it's just because we have male and female centroid distance data together
+# - it's not a problem
+
+# I no longer need the 'notes' column as it only contains info about species with no threats, which is now in
+# the 'no_threats' column
+threat_centr <- threat_centr %>% 
+  select(
+    -notes
+  )
+
+## Data analysis ----
+
+# Dropout threatened species in a null distribution framework
+
+# Let's plot th distributions of centroid distances for species threatened by accidental mortality
+# vs those not threatened by this driver
+threat_centr %>% 
+  ggplot(aes(x = centr_dist, fill = factor(acc_mort))) + 
+  geom_density(alpha = 1/3, position = "stack")
+
+acc_mort_mod <- lm(centr_dist ~ acc_mort, data = threat_centr)
+hunt_col_mod <- lm(centr_dist ~ hunt_col, data = threat_centr)
+hab_loss_mod <- lm(centr_dist ~ hab_loss, data = threat_centr)
+clim_chan_mod <- lm(centr_dist ~ clim_chan, data = threat_centr)
+pollut_mod <- lm(centr_dist ~ pollut, data = threat_centr)
+invas_spec_mod <- lm(centr_dist ~ invas_spec, data = threat_centr)
+no_threats_mod <- lm(centr_dist ~ no_threats, data = threat_centr)
+
+summary(acc_mort_mod)
+summary(hunt_col_mod)
+summary(hab_loss_mod)
+summary(clim_chan_mod)
+summary(pollut_mod)
+summary(invas_spec_mod)
+summary(no_threats_mod)

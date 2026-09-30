@@ -74,6 +74,12 @@ assign_ext_drivers <- function(threat_mat){
       )
     )
   
+  # for species with no threats, add this in the ex_driver column
+  threat_mat <- threat_mat %>% 
+    mutate(
+      ex_driver = ifelse(!is.na(notes) & notes == "no_threats", "no_threats", ex_driver)
+    )
+  
   return(threat_mat)
   
 }
@@ -110,6 +116,16 @@ assign_binary_ext_drivers <- function(threat_mat){
   other_codes <- c("10_1", "10_2", "10_3", "12_1")
   # Pollution
   pollut_codes <- "9_3"
+  # All significant codes
+  all_sig_codes <- c(
+    acc_mort_codes, 
+    clim_chan_codes, 
+    hab_loss_codes, 
+    hunt_col_codes,
+    invas_spec_codes,
+    other_codes,
+    pollut_codes
+    )
   
   threat_mat <- threat_mat |> 
     mutate( 
@@ -120,6 +136,7 @@ assign_binary_ext_drivers <- function(threat_mat){
       invas_spec = ifelse(second_ord_code %in% invas_spec_codes, 1, 0),
       other_threats = ifelse(second_ord_code %in% other_codes, 1, 0),
       pollut = ifelse(second_ord_code %in% pollut_codes, 1, 0),
+      non_sig_threat = ifelse(!is.na(second_ord_code) & !(second_ord_code %in% all_sig_codes), 1, 0),
       threat_data_missing = ifelse(is.na(second_ord_code) & notes != "no_threats", 1, 0)
     )
   
