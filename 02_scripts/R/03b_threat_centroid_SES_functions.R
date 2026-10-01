@@ -16,11 +16,11 @@ get_spec_rich <- function(trait_vec, sex){
 
 
 # get random species sample
-get_random_species <- function(trait_vec, unique_species, sex){
+get_random_species <- function(trait_vec, unique_species, sex, replace_par = FALSE){
   
   # if using males and females, need to get paired sex samples
   if(sex == "All"){
-    spp_sample <- sample(x = unique_species, size = nrow(trait_vec)/2, replace = FALSE)
+    spp_sample <- sample(x = unique_species, size = nrow(trait_vec)/2, replace = replace_par)
     coms <- c(paste0(spp_sample, "-M"), paste0(spp_sample, "-F"))
   } else {
     coms <- sample(x = all, size = nrow(trait_vec), replace = FALSE)
