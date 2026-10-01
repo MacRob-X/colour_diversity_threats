@@ -20,12 +20,19 @@ library(parallel)
 library(dispRity)
 
 ## EDITABLE CODE ##
+## Parameters of data to load
 # Use latest IUCN assessment data or use most recent assessment data pre- specified cutoff year?
 latest <- TRUE
 # If not using latest assessment data, specify a cutoff year. Set to NULL if using latest.
 cutoff_year <- NULL
 # Clade to focus on ("Aves", "Neognaths", "Neoaves", "Passeriformes")
 clade <- "Aves"
+# Exclude past threats?
+exclude_past_threats <- FALSE
+# Remove extinct (EX) species?
+# Remove extinct species?
+remove_extinct <- TRUE
+## Parameters for current analysis
 # Choose number of null simulations
 n_sims <- 1000
 # select sex ("M", "F", "All")
@@ -38,10 +45,20 @@ metric <- "centr-dist"
 # Load data ----
 
 # Load threat data with centroid distances
+if(remove_extinct){
+  ext_par <- "remove_extinct_"
+} else {
+  ext_par <- "keep_extinct_"
+}
+if(exclude_past_threats) {
+  past_threat_par <- "exclude_past_threats_"
+} else {
+  past_threat_par <- NULL
+}
 if(latest == TRUE){
-  filename <- paste0("centroid_jetz_threat_matrix_latest_2026-01-07.csv")
+  filename <- paste0(ext_par, past_threat_par, "centroid_jetz_threat_matrix_latest_2026-01-07.csv")
 } else if(latest == FALSE){
-  filename <- paste("centroid_jetz_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
+  filename <- paste0(ext_par, past_threat_par, "centroid_jetz_threat_matrix_", cutoff_year, "_cutoff_year.csv")
 }
 threat_data <- read.csv(
   here::here(
@@ -72,8 +89,8 @@ if(sex != "All"){
 ext_drivers <- c("clim_chan", "hab_loss", "pollut", "hunt_col", "acc_mort", "invas_spec")
 
 # Initialise data frame to write results to
-results <- as.data.frame(matrix(NA, nrow = 1, ncol = 8))
-colnames(results) <- c("ex_driver", "species_richness", "obs_mean", "null_mean", "null_sd", "null_se", "es", "ses")
+results <- as.data.frame(matrix(NA, nrow = 1, ncol = 9))
+colnames(results) <- c("ex_driver", "species_richness", "obs_mean", "null_mean", "null_sd", "null_se", "es", "p_value" "ses")
 results$ex_driver <- c("all_species")
 
 # Get PC matrix (with species/sex as rownames)
@@ -171,11 +188,12 @@ threat_results <- lapply(
     
     parallel::stopCluster(cl)
     
-    # Calculate null mean, SD, SE, ES, SES
+    # Calculate null mean, SD, SE, ES, p-value (with Laplace smoothing), SES
     null_mean <- mean(sims)
     null_sd <- sd(sims)
     null_se <- null_sd / sqrt(n_sims)
     es <- obs_mean - null_mean
+    p_value <- (length(which(abs(allspp_centr_dist - sims) >= abs(allspp_centr_dist - obs_mean))) + 1) / (n_sims + 1)
     ses <- es / null_sd
     
     to_return <- c(
@@ -186,6 +204,7 @@ threat_results <- lapply(
       null_sd,
       null_se,
       es,
+      p_value,
       ses
     )
     
@@ -207,16 +226,17 @@ results <- results %>%
 
 # Save as CSV
 if(latest == TRUE){
-  res_filename <- paste0("centroid_threat_reduction_SES_latest_2026-01-07.csv")
+  res_filename <- paste0(ext_par, past_threat_par, "_centroid_threat_reduction_SES_latest_2026-01-07.csv")
 } else if(latest == FALSE){
-  res_filename <- paste("centroid_threat_reduction_SES", cutoff_year, "cutoff_year.csv", sep = "_")
+  res_filename <- paste(ext_par, past_threat_par, "_centroid_threat_reduction_SES", cutoff_year, "cutoff_year.csv", sep = "_")
 }
 write.csv(
   results,
   here::here(
     "03_output_data", "03b_threat_centroid_SES",
     res_filename
-  )
+  ),
+  row.names = FALSE
 )
 
 ## Plotting ----

@@ -28,6 +28,8 @@ clade <- "Aves"
 # If TRUE, generated threat matrix will exclude threats classified as "Past, Unlikely to Return"
 # leaving only ongoing, future, unknown, and past but likely to return threats
 exclude_past_threats <-  TRUE
+# Remove extinct species?
+remove_extinct <- TRUE
 
 
 # Load data ----
@@ -51,12 +53,28 @@ colour_space <- readRDS(colspace_path)[["lab"]][["x"]]
 
 # Data preparation ----
 
-# exclude past threats, if desired
-if(exclude_past_threats == TRUE) {
+# Remove unnecessary X (species row ID) column
+threat_matrix <- threat_matrix %>% 
+  select(-X)
+
+# Remove extinct species, if desired, as well as data deficient
+if(remove_extinct){
   threat_matrix <- threat_matrix %>% 
     filter(
-      timing != "Past, Unlikely to Return"
+      !(iucn_cat %in% c("EX", "DD"))
     )
+  ext_par <- "remove_extinct_"
+} else {
+  threat_matrix <- threat_matrix %>% 
+    filter(
+      !(iucn_cat %in% "DD")
+    )
+  ext_par <- "keep_extinct_"
+}
+
+# exclude past threats, if desired
+if(exclude_past_threats) {
+  threat_matrix <- remove_past_threats(threat_matrix)
   past_threat_par <- "exclude_past_threats_"
 } else {
   past_threat_par <- NULL
@@ -66,7 +84,7 @@ if(exclude_past_threats == TRUE) {
 threat_matrix$second_ord_code <- stringr::str_extract(threat_matrix$code, "[^_]*_[^_]*")
 
 # inspect species with missing threat data
-missing_data_spp <- threat_matrix[which(is.na(threat_matrix$second_ord_code) & threat_matrix$notes != "no_threats"),]
+missing_data_spp <- threat_matrix[which(is.na(threat_matrix$second_ord_code) & !(threat_matrix$notes %in% c("no_threats", "past_threats_only"))),]
 # no missing data species
 rm(missing_data_spp)
 
@@ -158,13 +176,6 @@ threat_centr <- threat_centr %>%
     by = c("jetz_species", "sex")
   )
 
-# I no longer need the 'notes' column as it only contains info about species with no threats, which is now in
-# the 'no_threats' column
-threat_centr <- threat_centr %>% 
-  select(
-    -notes
-  )
-
 # reorder columns
 threat_centr <- threat_centr %>% 
   relocate(sex, .after = jetz_species) %>% 
@@ -172,9 +183,9 @@ threat_centr <- threat_centr %>%
 
 # Save as CSV
 if(latest == TRUE){
-  filename <- paste0(past_threat_par, "centroid_jetz_threat_matrix_latest_2026-01-07.csv")
+  filename <- paste0(ext_par, past_threat_par, "centroid_jetz_threat_matrix_latest_2026-01-07.csv")
 } else if(latest == FALSE){
-  filename <- paste0(past_threat_par, "centroid_jetz_threat_matrix_", cutoff_year, "_cutoff_year.csv")
+  filename <- paste0(ext_par, past_threat_par, "centroid_jetz_threat_matrix_", cutoff_year, "_cutoff_year.csv")
 }
 write.csv(
   threat_centr,

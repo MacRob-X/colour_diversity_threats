@@ -1,4 +1,58 @@
-# Functions for 03_colour_threats.R script
+# Functions for 03_colour_threats.R, 03a_threat_centroid.R and 03b_threat_centroid_SES.R scripts
+
+# Remove past threats from threat matrix
+remove_past_threats <- function(threat_mat){
+  
+  # filter to only past threat rows (removing NAs)
+  past_threat_rows <- threat_mat %>% 
+    filter(
+      timing == "Past, Unlikely to Return"
+    )
+  
+  # and only ongoing/future etc rows (including NAs)
+  current_threat_rows <- threat_mat %>% 
+    filter(
+      !(timing %in% "Past, Unlikely to Return")
+    )
+  
+  # get associated species
+  past_threat_spp <- unique(past_threat_rows$jetz_species)
+  current_threat_spp <- unique(current_threat_rows$jetz_species)
+  
+  # check which species have both past and current threats
+  both_threats_spp <- intersect(past_threat_spp, current_threat_spp)
+  
+  # check which species are ONLY in the past threat rows
+  # these have no current threats and can be coded as having no threats
+  past_threats_only_spp <- past_threat_spp[which(!past_threat_spp %in% current_threat_spp)]
+  
+  # code as having no current threats (i.e. make everything NA and add 'no_current_threats' in notes)
+
+  # threat matrix of past threat only species
+  threat_mat_pto <- threat_mat[threat_mat$jetz_species %in% past_threats_only_spp, ]
+  # set these threats to NA
+  cols_to_na <- c("scope", "timing", "internationalTrade", "score","severity","ancestry","virus","ias","text", "code")
+  threat_mat_pto[threat_mat_pto$jetz_species %in% past_threats_only_spp, cols_to_na] <- rep(NA, times = length(cols_to_na))
+  threat_mat_pto[threat_mat_pto$jetz_species %in% past_threats_only_spp, "notes"] <- "past_threats_only"
+  # we only need one row per species for these species, regardless of how many past threats they had
+  # so let's remove any duplicate rows
+  threat_mat_pto <- threat_mat_pto[!duplicated(threat_mat_pto), ]
+  
+  
+  # For the species which have both past and current threats, I can simply remove the past threats rows
+  # from the matrix, leaving the current threat rows, and rbind to the past threat only rows
+  new_threat_mat <- rbind(current_threat_rows, threat_mat_pto)
+  
+  # check the number of rows adds up
+  assertthat::assert_that(
+    nrow(new_threat_mat) == nrow(threat_mat) - nrow(past_threat_rows) + nrow(threat_mat_pto),
+    msg = "Number of rows inconsistent - there is some error in this function."
+      
+  )
+  
+  return(new_threat_mat)
+  
+}
 
 
 # Assign second order threat types to extinction drivers
@@ -78,6 +132,12 @@ assign_ext_drivers <- function(threat_mat){
   threat_mat <- threat_mat %>% 
     mutate(
       ex_driver = ifelse(!is.na(notes) & notes == "no_threats", "no_threats", ex_driver)
+    )
+  
+  # same for species with only past threats - assign these as having no threats
+  threat_mat <- threat_mat %>% 
+    mutate(
+      ex_driver = ifelse(!is.na(notes) & notes == "past_threats_only", "no_threats", ex_driver)
     )
   
   return(threat_mat)
