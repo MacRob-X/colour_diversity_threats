@@ -25,24 +25,35 @@ cutoff_year <- NULL
 clade <- "Aves"
 # Colour space to use
 space <- "lab"
+# Exclude past threats?
+exclude_past_threats <- FALSE
+# Remove extinct (EX) species?
+remove_extinct <- TRUE
 
 # Load data ----
 
-# Load threat data (Jetz taxonomy version)
-if(latest == TRUE){
-  jetz_threat_filename <- paste0("jetz_threat_matrix_latest_2026-01-07.csv")
-} else if(latest == FALSE){
-  jetz_threat_filename <- paste("jetz_threat_matrix", cutoff_year, "cutoff_year.csv", sep = "_")
+# Load threat data with centroid distances (binary variables version)
+if(remove_extinct){
+  ext_par <- "remove_extinct_"
+} else {
+  ext_par <- "keep_extinct_"
 }
-threat_matrix <- read.csv(
-  file = here::here(
-    "03_output_data", jetz_threat_filename
+if(exclude_past_threats) {
+  past_threat_par <- "exclude_past_threats_"
+} else {
+  past_threat_par <- NULL
+}
+if(latest == TRUE){
+  filename <- paste0(ext_par, past_threat_par, "centroid_jetz_threat_matrix_latest_2026-01-07.csv")
+} else if(latest == FALSE){
+  filename <- paste0(ext_par, past_threat_par, "centroid_jetz_threat_matrix_", cutoff_year, "_cutoff_year.csv")
+}
+threat_data <- read.csv(
+  here::here(
+    "03_output_data", "03a_threat_centroid",
+    filename
   )
 )
-
-# load colour pattern space (created in Chapter 1 - patch-pipeline)
-colspace_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/1_Raw_PCA/", clade, ".matchedsex.patches.250716.PCAcolspaces.rds")
-colour_space <- readRDS(colspace_path)[[space]][["x"]]
 
 # load colour pattern space UMAP (created in Chapter 1 - patch-pipeline)
 umap_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/2_UMAP/", clade, ".matchedsex.patches.nn.25.mindist.0.1.", space, ".UMAP.rds")
@@ -52,169 +63,38 @@ umap <- readRDS(umap_path)[["layout"]]
 
 
 # Exclude Data Deficient (DD), Extinct (EX) and Extinct in the Wild (EW) species
-threat_matrix <- threat_matrix |> 
-  filter(
-    !(iucn_cat %in% c("DD", "EX", "EW"))
-  )
-
-# add second-order threat codes to threat matrix (derived from third-order codes)
-threat_matrix$second_ord_code <- stringr::str_extract(threat_matrix$code, "[^_]*_[^_]*")
+# threat_matrix <- threat_matrix %>% 
+#   filter(
+#     !(iucn_cat %in% c("DD", "EX", "EW"))
+#   )
 
 
-# assign second-order IUCN threat types to grouped 'driver of extinction' categories
-# same system as Stewart et al 2025 Nat Ecol Evol - grouping is provided in Supplementary Dataset 1
-# of that paper
-# There are many threats that aren't assigned to one of these groups - this is because these
-# threats were non-significant in predicting IUCN threat level in Stewart et al 2025
-# We assign these as 'FLAG' in case we want to do anything with them later
-
-# Groups
-# Accidental mortality and disturbance
-acc_mort_codes <- c("4_2", "5_4", "6_3")
-# Climate change and severe weather
-clim_chan_codes <- c("11_1", "11_4")
-# Habitat loss and degradation
-hab_loss_codes <- c("1_2", "1_3", "2_1", "2_2", "2_3", "5_3", "7_1", "7_2")
-# Hunting and collecting
-hunt_col_codes <- "5_1"
-# Invasive species and disease
-invas_spec_codes <- c("8_1", "8_2")
-# Other ["Threats that affected ten or fewer species were grouped with other threats"]
-other_codes <- c("10_1", "10_2", "10_3", "12_1")
-# Pollution
-pollut_codes <- "9_3"
-
-
-# First, let's make a version with a binary variable for each extinction driver
-threat_matrix_bin <- threat_matrix |> 
-  mutate(
-    acc_mort = ifelse(second_ord_code %in% acc_mort_codes, 1, 0),
-    clim_chan = ifelse(second_ord_code %in% clim_chan_codes, 1, 0),
-    hab_loss = ifelse(second_ord_code %in% hab_loss_codes, 1, 0),
-    hunt_col = ifelse(second_ord_code %in% hunt_col_codes, 1, 0),
-    invas_spec = ifelse(second_ord_code %in% invas_spec_codes, 1, 0),
-    other = ifelse(second_ord_code %in% other_codes, 1, 0),
-    pollut = ifelse(second_ord_code %in% pollut_codes, 1, 0),
-  ) |> 
-  select(
-    jetz_species, iucn_cat, acc_mort, clim_chan, hab_loss, hunt_col, invas_spec, other, pollut 
-  ) |> 
-  distinct() |> 
-  group_by(jetz_species, iucn_cat) %>%
-  # Apply the 'max' function across all remaining columns
-  # This ensures if a threat is 1 in ANY row, it becomes 1 in the result
-  summarise(across(everything(), max), .groups = 'drop')
-
-# can make a long version of this
-threat_bin_long <- threat_matrix_bin |> 
+# can make a long version of threat matrix (pivot on threats)
+threat_bin_long <- threat_data %>% 
   tidyr::pivot_longer(
     c(acc_mort, clim_chan, hab_loss, hunt_col, invas_spec, other, pollut),
     names_to = "threat_type",
     values_to = "threat_present"
   )
 
-# Alternate version with a categorical variable instead of binary
-threat_matrix <- threat_matrix |> 
-  mutate(
-    ex_driver = second_ord_code
-  ) |> 
-  mutate( # surely there's a more elegant way to do this
-    ex_driver = ifelse(
-      ex_driver %in% acc_mort_codes,
-      "acc_mort",
-      ifelse(
-        ex_driver %in% clim_chan_codes,
-        "clim_chan",
-        ifelse(
-          ex_driver %in% hab_loss_codes,
-          "hab_loss",
-          ifelse(
-            ex_driver %in% hunt_col_codes,
-            "hunt_col",
-            ifelse(
-              ex_driver %in% invas_spec_codes,
-              "invas_spec",
-              ifelse(
-                ex_driver %in% other_codes,
-                "other",
-                ifelse(
-                  ex_driver %in% pollut_codes,
-                  "pollut",
-                  ifelse(
-                    is.na(ex_driver),
-                    NA,
-                    "FLAG"
-                  )
-                )
-              )
-            )
-          )
-        )
-      )
-    )
-  )
 
 
-# For now, let's make all the flagged threats (i.e. those which are not significant predictors
-# of extinction risk) NA, as we're not interested them
-# threat_matrix <- threat_matrix |> 
-#   mutate(
-#     ex_driver = ifelse(
-#       ex_driver == "FLAG",
-#       NA,
-#       ex_driver
-#     )
-#   )
-# NOTE 18/02/2026
-# I don't actually want to do the above snippet, as I need to treat these species differently to
-# species for which we truly have no threat data (which will be NA)
-# Instead I will mark these as "no_sig_driver" so that I can include them in downstream 
-# analysis with confidence
-threat_matrix <- threat_matrix |>
-  mutate(
-    ex_driver = ifelse(
-      ex_driver == "FLAG",
-      "no_sig_driver",
-      ex_driver
-    )
-  )
-
-
-
-
-# Get threat data with PC axes
-colour_space_sppsex <- data.frame(species = sapply(strsplit(rownames(colour_space), split = "-"), "[", 1),
-                                  sex = sapply(strsplit(rownames(colour_space), split = "-"), "[", 2), 
-                                  colour_space)
-threat_colour <- threat_matrix |> 
-  inner_join(colour_space_sppsex, by = join_by("jetz_species" == "species"))
-# this throws a warning but it's just because we have male and female data together
-# - it's not a problem
-
-# remove duplicates based on second-order code
-threat_colour_clean <- threat_colour |> 
-  distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
-
-# remove duplicates based on extinction driver
-threat_colour_clean <- threat_colour_clean |> 
-  distinct(ex_driver, jetz_species, sex, .keep_all = TRUE)
-
-# Pivot longer, so we can facet by PC axis
-threat_colour_long <- threat_colour_clean |> 
+# Pivot longer on PC axes (so we can facet plots by axis)
+threat_pc_long <- threat_data %>% 
   tidyr::pivot_longer(
     cols = starts_with("PC"),
     names_to = "PC",
     values_to = "PC_value"
   ) 
 
-# get threat data with UMAP axes
+# get wide threat data with UMAP axes
 umap_sppsex <- data.frame(species = sapply(strsplit(rownames(umap), split = "-"), "[", 1),
                           sex = sapply(strsplit(rownames(umap), split = "-"), "[", 2), 
                           umap)
 
 
-threat_umap <- threat_matrix |> 
-  inner_join(umap_sppsex, by = join_by("jetz_species" == "species")) |> 
+threat_umap <- threat_data %>% 
+  inner_join(umap_sppsex, by = join_by("jetz_species" == "species", "sex")) %>% 
   rename(
     UMAP1 = X1,
     UMAP2 = X2
@@ -222,40 +102,24 @@ threat_umap <- threat_matrix |>
 # this throws a warning but it's just because we have male and female data together
 # - it's not a problem
 
-# remove duplicates based on second-order code
-threat_umap_clean <- threat_umap |> 
-  distinct(second_ord_code, jetz_species, sex, .keep_all = TRUE)
-
-# remove duplicates based on extinction driver
-threat_umap_clean <- threat_umap_clean |> 
-  distinct(ex_driver, jetz_species, sex, .keep_all = TRUE)
-
-# add PC values
-threat_umap_clean <- threat_umap_clean |> 
-  inner_join(
-    colour_space_sppsex,
-    by = c("jetz_species" = "species", "sex" = "sex")
-  )
-
-
 # Plotting ----
 
 
 # Proportional 2D density plots (The Juice) ----
 
 # set focal extinction driver
-focal_threat <- "pollut"
+focal_threat <- "hab_loss"
 # set axes (PCs or UMAP axes)
 ax_1 <- "PC1"
 ax_2 <- "PC2"
 
 # Get proportional density of species threatened by focal threat vs ALL other species
 prop_dens <- prop_dens_2d(
-  threat_umap_clean,
+  threat_umap,
   focal_threat = focal_threat,
   x_axis = ax_1, y_axis = ax_2,
   threatened_spp_only = FALSE,
-  vs = "all_species",
+  vs = "other_species",
   n_bins = 200,
   return_params = TRUE
 )
@@ -266,12 +130,12 @@ plot_prop_dens_2d(
   prop_dens
 )
 
-# plot non-propoartional (raw) density of focal threat species, for comparison
+# plot non-proportional (raw) density of focal threat species, for comparison
 pollut_dens <- MASS::kde2d(
-  x = threat_umap_clean[which(threat_umap_clean$ex_driver == focal_threat), ax_1], 
-  y = threat_umap_clean[which(threat_umap_clean$ex_driver == focal_threat), ax_2],
+  x = threat_umap[which(threat_umap[[focal_threat]] == 1), ax_1], 
+  y = threat_umap[which(threat_umap[[focal_threat]] == 1), ax_2],
   n = 200,
-  lims = c(range(threat_umap_clean[[ax_1]]), range(threat_umap_clean[[ax_2]]))
+  lims = c(range(threat_umap[[ax_1]]), range(threat_umap[[ax_2]]))
 )
 plot_prop_dens_2d(pollut_dens)
 
@@ -295,7 +159,7 @@ prop_densities <- pbapply::pblapply(
   function(driver){
     
     prop_dens <- prop_dens_2d(
-      threat_umap_clean,
+      threat_umap,
       focal_threat = driver,
       x_axis = ax_1, y_axis = ax_2,
       threatened_spp_only = FALSE,
@@ -350,105 +214,142 @@ lapply(
 dev.off()
 
 
-# UMAP density plot by threat
-threat_umap_clean |> 
+# UMAP density plot by threat (non-proportional)
+threat_umap %>% 
   bind_rows(
-    threat_umap_clean |> 
+    threat_umap %>% 
       mutate(
-        ex_driver = "all"
+        all_spec = 1
       )
-  ) |> 
+  ) %>% 
+  mutate(
+    all_spec = ifelse(is.na(all_spec), 0, all_spec)
+  ) %>% 
+  tidyr::pivot_longer(
+    c(acc_mort, clim_chan, hab_loss, hunt_col, invas_spec, other, pollut, all_spec),
+    names_to = "threat_type",
+    values_to = "threat_present"
+  ) %>% 
   filter(
     iucn_cat != "LC",
-    !(ex_driver %in% c(NA, "other"))
-  ) |> 
+    !(threat_type %in% c(NA, "other")),
+    threat_present == 1
+  )  %>%  
   mutate(
-    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    threat_type = factor(threat_type, levels = c("all_spec", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
     sex = factor(sex, levels = c("M", "F"))
-  ) |> 
+  ) %>% 
   # filter(
   #   ex_driver != "all"
-  # ) |> 
+  # ) %>% 
   ggplot(aes(x = UMAP1, y = UMAP2)) + 
   geom_density_2d_filled() + 
-  facet_wrap(~ ex_driver)
+  facet_wrap(~ threat_type)
 
 
-threat_colour_clean |> 
+
+# Same for PC1/2
+threat_data %>% 
   bind_rows(
-    threat_colour_clean |> 
+    threat_data %>% 
       mutate(
-        ex_driver = "all"
+        all_spec = 1
       )
-  ) |> 
+  ) %>% 
+  mutate(
+    all_spec = ifelse(is.na(all_spec), 0, all_spec)
+  ) %>% 
+  tidyr::pivot_longer(
+    c(acc_mort, clim_chan, hab_loss, hunt_col, invas_spec, other, pollut, all_spec),
+    names_to = "threat_type",
+    values_to = "threat_present"
+  ) %>% 
   filter(
     iucn_cat != "LC",
-    !(ex_driver %in% c(NA, "other"))
-  ) |> 
+    !(threat_type %in% "other"),
+    threat_present == 1
+  )  %>%  
   mutate(
-    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    threat_type = factor(threat_type, levels = c("all_spec", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
     sex = factor(sex, levels = c("M", "F"))
-  ) |> 
+  ) %>% 
   # filter(
   #   ex_driver != "all"
-  # ) |> 
+  # ) %>% 
   ggplot(aes(x = PC1, y = PC2)) + 
   geom_density_2d_filled() + 
-  facet_wrap(~ ex_driver)
+  facet_wrap(~ threat_type)
+
 
 # boxplot of PC values by threat type - exclude LC species
 # Compare to all threatened species
-threat_colour_long |> 
+threat_pc_long %>% 
   bind_rows(
-    threat_colour_long |> 
+    threat_pc_long %>% 
       mutate(
-        ex_driver = "all"
+        all_spec = 1
       )
-  ) |> 
+  ) %>% 
+  mutate(
+    all_spec = ifelse(is.na(all_spec), 0, all_spec)
+  ) %>% 
+  tidyr::pivot_longer(
+    c(acc_mort, clim_chan, hab_loss, hunt_col, invas_spec, other, pollut, all_spec),
+    names_to = "threat_type",
+    values_to = "threat_present"
+  ) %>% 
   filter(
     iucn_cat != "LC",
-    !(ex_driver %in% c(NA, "other")),
-    PC %in% paste0("PC", 2)
-  ) |> 
+    !(threat_type %in% c(NA, "other")),
+    PC %in% paste0("PC", 4),
+    threat_present == 1
+  ) %>% 
   mutate(
-    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    threat_type = factor(threat_type, levels = c("all_spec", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
     sex = factor(sex, levels = c("M", "F"))
-  ) |> 
-  ggplot(aes(x = ex_driver, y = PC_value, fill = ex_driver)) + 
+  ) %>% 
+  ggplot(aes(x = threat_type, y = PC_value, fill = threat_type)) + 
   geom_boxplot(outliers = F) + 
   facet_grid(~ sex)
 
 # Density plot of all species (excluding LC) vs species threatened by each threat type,
 # faceted by PC axis (first 7 PCs only)
-threat_colour_long |> 
+threat_pc_long %>% 
   bind_rows(
-    threat_colour_long |> 
-      filter(
-        ex_driver != "hunt_col"
-      ) |> 
+    threat_pc_long %>% 
       mutate(
-        ex_driver = "all"
-      ) |> 
-      distinct()
-  ) |> 
+        all_spec = 1
+      )
+  ) %>% 
+  mutate(
+    all_spec = ifelse(is.na(all_spec), 0, all_spec)
+  ) %>% 
+  tidyr::pivot_longer(
+    c(acc_mort, clim_chan, hab_loss, hunt_col, invas_spec, other, pollut, all_spec),
+    names_to = "threat_type",
+    values_to = "threat_present"
+  ) %>% 
   filter(
     iucn_cat != "LC",
-    !(ex_driver %in% c(NA, "other")),
-    PC %in% paste0("PC", 1)
-  ) |> 
+    !(threat_type %in% c(NA, "other")),
+    PC %in% paste0("PC", 5:8),
+    threat_present == 1
+  ) %>% 
   mutate(
-    ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+    threat_type = factor(threat_type, levels = c("all_spec", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
     sex = factor(sex, levels = c("M", "F"))
-  ) |> 
+  ) %>% 
   filter(
-    ex_driver %in% c("all", "hunt_col")
-  ) |> 
-  ggplot(aes(x = PC_value, fill = ex_driver)) + 
+    threat_type %in% c("all_spec", "hunt_col")
+  ) %>% 
+  ggplot(aes(x = PC_value, fill = threat_type)) + 
   geom_density(alpha = 0.4) + 
   geom_segment(x = 0, xend = 0, y = 0, yend = 0.04, lwd = 0.3, colour = "grey30") + # Vertical line at 0
   facet_grid(rows = vars(PC), cols = vars(sex)) + 
   theme_minimal()
 
+
+## 2026-10-06 ---- DONE UP TO HERE
 # function to do the above
 plot_pc_distrib <- function(pc_axis, threat_type, long_data, absolute = FALSE) {
   
@@ -456,28 +357,34 @@ plot_pc_distrib <- function(pc_axis, threat_type, long_data, absolute = FALSE) {
     long_data$PC_value <- abs(long_data$PC_value)
   }
   
-  p <- long_data |> 
-    bind_rows(
-      long_data |> 
-        filter(
-          ex_driver != threat_type
-        ) |> 
+  p <- long_data %>% 
+      bind_rows(
+        long_data %>% 
+          mutate(
+            all_spec = 1
+          )
+      ) %>% 
         mutate(
-          ex_driver = "all"
-        ) |> distinct()
-    ) |> 
+          all_spec = ifelse(is.na(all_spec), 0, all_spec)
+        ) %>% 
+        tidyr::pivot_longer(
+          c(acc_mort, clim_chan, hab_loss, hunt_col, invas_spec, other, pollut, all_spec),
+          names_to = "ex_driver",
+          values_to = "threat_present"
+        ) %>% 
     filter(
       iucn_cat != "LC",
       !(ex_driver %in% c(NA, "other")),
-      PC == pc_axis
-    ) |> 
+      PC == pc_axis,
+      threat_present == 1
+    ) %>% 
     mutate(
-      ex_driver = factor(ex_driver, levels = c("all", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
+      ex_driver = factor(ex_driver, levels = c("all_spec", "hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")),
       sex = factor(sex, levels = c("M", "F"))
-    ) |> 
+    ) %>% 
     filter(
-      ex_driver %in% c("all", threat_type)
-    ) |> 
+      ex_driver %in% c("all_spec", threat_type)
+    ) %>% 
     ggplot(aes(x = PC_value, fill = ex_driver)) + 
     geom_density(alpha = 0.4) + 
     scale_fill_discrete(name = "Threats", labels = c("All threats", "Specific threat")) + 
@@ -496,12 +403,12 @@ plot_pc_distrib <- function(pc_axis, threat_type, long_data, absolute = FALSE) {
 }
 
 threat_types <- c(hab_loss = "hab_loss", hunt_col = "hunt_col", invas_spec = "invas_spec", clim_chan = "clim_chan", pollut = "pollut", acc_mort = "acc_mort")
-pc_axis <- "PC2"
+pc_axis <- "PC1"
 pc_plots <- lapply(
   threat_types,
   plot_pc_distrib,
   pc_axis = pc_axis,
-  long_data = threat_colour_long,
+  long_data = threat_pc_long,
   absolute = FALSE
 )
 p_pc1_allthreats <- ggpubr::ggarrange(plotlist = pc_plots, common.legend = TRUE, ncol = 2, nrow = 3)
@@ -517,7 +424,7 @@ abs_pc_plots <- lapply(
   threat_types,
   plot_pc_distrib,
   pc_axis = pc_axis,
-  long_data = threat_colour_long,
+  long_data = threat_pc_long,
   absolute = TRUE
 )
 abs_allthreats <- ggpubr::ggarrange(plotlist = abs_pc_plots, common.legend = TRUE, ncol = 2, nrow = 3)
@@ -556,7 +463,7 @@ pcs <- paste0("PC", 1:7)
 #     cvm <- pbapply::pblapply(
 #       pcs, 
 #       test_pc_threat,
-#       threat_colour_long = threat_colour_long,
+#       threat_pc_long = threat_pc_long,
 #       threat = threat_type,
 #       n = 1000,
 #       seed = 42,
@@ -582,25 +489,30 @@ pcs <- paste0("PC", 1:7)
 # and twosamples does the same thing much faster
 sexes <- c("both_sexes")
 threatened_spp_only_par <- FALSE
-res_twosamples <- pbapply::pblapply(
+res_twosamples <- lapply(
   sexes,
   function(sex){
-    
-    sex_res <- pbapply::pblapply(
+
+    sex_res <- lapply(
       
       threat_types,
       
       function(threat_type){
-        
-        pc_stats <- pbapply::pblapply(
+
+        pc_stats <- lapply(
           pcs,
-          test_pc_threat_twosamples,
-          threat_colour_long = threat_colour_long,
-          threat_type = threat_type,
-          focal_sex = sex,
-          n_boots = 1000,
-          stat_test = "wass",
-          threatened_spp_only = threatened_spp_only_par
+          function(pc){
+            # filter to focal PC here to save overhead
+            dat <- threat_pc_long[threat_pc_long$PC == pc, ]
+            stat <- test_pc_threat_twosamples(pc, 
+                                              threat_colour_long = dat, 
+                                              threat_type = threat_type,
+                                              focal_sex = sex,
+                                              n_boots = 1000,
+                                              stat_test = "wass",
+                                              threatened_spp_only = threatened_spp_only_par)
+            return(stat)
+          }
         )
         
         threat_res <- do.call(rbind, pc_stats)
@@ -613,14 +525,14 @@ res_twosamples <- pbapply::pblapply(
 # format results
 res_twosamples <- do.call(rbind, res_twosamples)
 colnames(res_twosamples) <- c("extinction_driver", "test_stat", "p_value", "PC", "sex")
-res_twosamples <- res_twosamples |> 
+res_twosamples <- res_twosamples %>% 
   select(PC, extinction_driver, sex, test_stat, p_value)
 
 # Bonferroni correction for p-values (within sex)
-res_twosamples <- res_twosamples |> 
+res_twosamples <- res_twosamples %>% 
   group_by(
     sex
-  ) |> 
+  ) %>% 
   mutate(
     p_adjusted = p.adjust(p_value, method = "bonferroni")
   )
@@ -648,12 +560,12 @@ write.csv(
 # NOTE that I am no longer using my own function - it does the same thing as the twosamples function
 # and is much slower
 # This code snippet is no longer necessary
-# ordered_ts_res <- res_twosamples |> 
+# ordered_ts_res <- res_twosamples %>% 
 #   arrange(p_value)
-# ordered_wass_res <- wass_res_new |> 
+# ordered_wass_res <- wass_res_new %>% 
 #   arrange(p_value)
 # identical(ordered_ts_res[, c("PC", "extinction_driver")], ordered_wass_res[, c("PC", "extinction_driver")])
-# full_res <- ordered_ts_res |> 
+# full_res <- ordered_ts_res %>% 
 #   full_join(
 #     ordered_wass_res, by = c("PC", "extinction_driver")
 #   )
@@ -669,7 +581,7 @@ write.csv(
 # identical(full_res[full_res$p_value.x > 0.05, ], full_res[full_res$p_value.y > 0.05, ])
 # 
 # # same for adjusted p-values
-# full_res <- full_res |> 
+# full_res <- full_res %>% 
 #   mutate(
 #     p_value.x_adj = p.adjust(p_value.x),
 #     p_value.y_adj = p.adjust(p_value.y)
@@ -683,21 +595,38 @@ write.csv(
 
 # Keep only the axes for which p-value (from twosamples results) < 0.05
 # Use this because SES is unreliable for skewed distributions of null statistics
-sig_pc_exdrive <- res_twosamples |> 
+sig_pc_exdrive <- res_twosamples %>% 
   filter(
     p_value < 0.05
   )
-sig_combos <- sig_pc_exdrive |> 
+sig_combos <- sig_pc_exdrive %>% 
   select(
     PC, extinction_driver, sex
-  ) |> 
+  ) %>% 
   mutate(
     combo = paste(PC, extinction_driver, sex, sep = "_")
   )
 
 # Test for SPECIFIC distributional differences in each of these axis/threat combinations
-# --> Mean shift (via lm/ANOVA)
-# --> Shift in variance (via Levene's test)
+# --> Mean shift (via difference in means, with permutation test)
+# --> Shift in variance (via difference in standard deviation, via permutation test)
+
+# 2026-10-07 New method for detecting mean shifts and variance differences
+# test function
+# first filter data to only the focal PC (essential to save overhead, otherwise function
+# times out if you call it in an lapply because the dataset is so big)
+focal_combo_num <- 9
+focal_pc <- sig_combos[[focal_combo_num, "PC"]]
+test_data <- threat_pc_long[threat_pc_long[["PC"]] == focal_pc, ]
+debug(test_meanshift_varshift)
+test_res <- test_meanshift_varshift(
+  combo_number = focal_combo_num,
+  sig_combos_df = sig_combos,
+  filtered_colour_data = test_data,
+  n_boots = 1000,
+  threatened_spp_only = FALSE,
+  focal_sex = "both_sexes"
+)
 
 # Mean shift and variance inequality
 # I want to run a t-test and Levene's test on each significant PC/extinction driver combination,
@@ -709,7 +638,7 @@ spec_test_res <- pbapply::pblapply(
   1:nrow(sig_combos),
   ttest_levenetest_pc_threat,
   sig_combos_df = sig_combos, # this gives us the PC axis, threat type and focal sex
-  threat_colour_long = threat_colour_long,
+  threat_pc_long = threat_pc_long,
   n_boots = 1000,
   threatened_spp_only = threatened_spp_only_par
 )
@@ -748,10 +677,10 @@ spec_test_res <- read.csv(
 )
 
 # plot significant meanshift drivers - vertical bars
-mean_shift_plot <- spec_test_res |> 
+mean_shift_plot <- spec_test_res %>% 
   filter(
     mean_shift_p < 0.05
-  ) |> 
+  ) %>% 
   ggplot(aes(x = ex_driver, y = mean_shift_es, fill = ex_driver)) + 
   geom_col() + 
   facet_wrap(~ PC) + 
@@ -768,14 +697,14 @@ mean_shift_plot <- spec_test_res |>
 mean_shift_plot
 
 # plot significant meanshift drivers - horizontal bars
-mean_shift_plot <- spec_test_res |> 
+mean_shift_plot <- spec_test_res %>% 
   # filter(
   #   mean_shift_p < 0.05
-  # ) |> 
+  # ) %>% 
   mutate(
     signif = ifelse(mean_shift_p < 0.05, "y", "n")
-  ) |> 
-  filter(PC %in% paste0("PC", 1:6)) |> 
+  ) %>% 
+  filter(PC %in% paste0("PC", 1:6)) %>% 
   ggplot(aes(y = ex_driver, x = mean_shift_obs, fill = signif)) + 
   geom_col() + 
   geom_vline(xintercept = 0) + 
@@ -797,11 +726,11 @@ mean_shift_plot <- spec_test_res |>
 mean_shift_plot
 
 # and significant variance inequality drivers - vertical bars
-var_inequal_plot <- spec_test_res |> 
+var_inequal_plot <- spec_test_res %>% 
   filter(
     var_inequal_p < 0.05
-  ) |> 
-  filter(PC %in% paste0("PC", 1:6)) |> 
+  ) %>% 
+  filter(PC %in% paste0("PC", 1:6)) %>% 
   ggplot(aes(x = ex_driver, y = var_inequal_es, fill = ex_driver)) + 
   geom_col() + 
   facet_wrap(~ PC) + 
@@ -818,15 +747,15 @@ var_inequal_plot <- spec_test_res |>
 var_inequal_plot
 
 # horizontal bars
-var_inequal_plot <- spec_test_res |> 
+var_inequal_plot <- spec_test_res %>% 
   # filter(
   #   var_inequal_p < 0.05
-  # ) |> 
+  # ) %>% 
   mutate(
     signif = ifelse(var_inequal_p < 0.05, "y", "n"),
     sd_diff = ifelse(delta_sd > 0, "pos", "neg")
-  ) |> 
-  filter(PC %in% paste0("PC", 1:6)) |> 
+  ) %>% 
+  filter(PC %in% paste0("PC", 1:6)) %>% 
   ggplot(aes(y = ex_driver, x = var_inequal_es, colour = signif, fill = sd_diff)) + 
   geom_col(linewidth = 1) + 
   facet_wrap(~ PC) + 
@@ -896,29 +825,29 @@ summary(mod)
 # tell me if one distribution is more clustered around the mean than another
 
 
-focal_distrib <- threat_colour_long |> 
+focal_distrib <- threat_pc_long %>% 
   filter(
     iucn_cat != "LC",
-  ) |> 
+  ) %>% 
   filter(
     PC == focal_combo$PC,
     ex_driver == focal_combo$extinction_driver
   )
-non_focal_distrib <- threat_colour_long |> 
+non_focal_distrib <- threat_pc_long %>% 
   filter(
     iucn_cat != "LC"
-  ) |> 
+  ) %>% 
   filter(
     PC == focal_combo$PC,
     ex_driver != focal_combo$extinction_driver
-  ) |> 
+  ) %>% 
   mutate(
     ex_driver = "non_focal"
   )
-mod_dat <- focal_distrib |> 
+mod_dat <- focal_distrib %>% 
   bind_rows(
     non_focal_distrib
-  ) |> 
+  ) %>% 
   select(
     PC, ex_driver, PC_value
   )
@@ -954,13 +883,13 @@ t_mod <- t.test(PC_value ~ ex_driver, data = mod_dat)
 t_mod
 summary(t_mod)
 
-threat_col_sig_combos <- threat_colour_long |> 
+threat_col_sig_combos <- threat_pc_long %>% 
   filter(
     iucn_cat != "LC",
-  ) |> 
+  ) %>% 
   mutate(
     combo = paste(PC, ex_driver, sep = "_")
-  ) |> 
+  ) %>% 
   filter(
     combo %in% sig_combos$combo
   )
@@ -971,7 +900,7 @@ mean_shift_mod <- lme4::glmer(PC_value ~ 1 + ex_driver + (1 | PC), data = threat
 mean_shift_mod
 summary(mean_shift_mod)
 
-threat_col_sig_combos |> 
+threat_col_sig_combos %>% 
   ggplot(aes(x = ex_driver, y = PC_value, fill = ex_driver)) + 
   geom_boxplot() + 
   stat_smooth(method = "lm", fullrange = T) + 
@@ -983,17 +912,17 @@ mean_shift_mods <- pbapply::pblapply(
   sig_combos$combo,
   function(var_combo){
     
-    combos <- sig_combos |> 
+    combos <- sig_combos %>% 
       combo = var_combo
     
-    focal_distrib <- threat_col_sig_combos |> 
+    focal_distrib <- threat_col_sig_combos %>% 
       filter(
         combo == var_combo,
-      ) |> 
+      ) %>% 
       pull(
         PC_value
       )
-    non_focal_distrib <- threat_col_sig_combos |> 
+    non_focal_distrib <- threat_col_sig_combos %>% 
       filter(
         pc == unique(combos$PC),
         ex_driver 
