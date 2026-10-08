@@ -108,7 +108,7 @@ threat_umap <- threat_data %>%
 # Proportional 2D density plots (The Juice) ----
 
 # set focal extinction driver
-focal_threat <- "hab_loss"
+focal_threat <- "hunt_col"
 # set axes (PCs or UMAP axes)
 ax_1 <- "PC1"
 ax_2 <- "PC2"
@@ -138,8 +138,14 @@ pollut_dens <- MASS::kde2d(
   lims = c(range(threat_umap[[ax_1]]), range(threat_umap[[ax_2]]))
 )
 plot_prop_dens_2d(pollut_dens)
-
-
+# plot density of all species, for comparison
+all_dens <- MASS::kde2d(
+  x = threat_umap[, ax_1], 
+  y = threat_umap[, ax_2],
+  n = 200,
+  lims = c(range(threat_umap[[ax_1]]), range(threat_umap[[ax_2]]))
+)
+plot_prop_dens_2d(all_dens)
 
 # Plot multiple threats together
 # Set vs parameter
@@ -349,7 +355,6 @@ threat_pc_long %>%
   theme_minimal()
 
 
-## 2026-10-06 ---- DONE UP TO HERE
 # function to do the above
 plot_pc_distrib <- function(pc_axis, threat_type, long_data, absolute = FALSE) {
   
@@ -628,28 +633,54 @@ test_res <- test_meanshift_varshift(
   focal_sex = "both_sexes"
 )
 
+# now run across all combos
+spec_test_res <- lapply(
+  1:nrow(sig_combos),
+  function(focal_combo_num){
+    # get focal PC
+    focal_pc <- sig_combos[[focal_combo_num, "PC"]]
+    # get focal threat
+    focal_threat <- sig_combos[[focal_combo_num, "extinction_driver"]]
+    # print which combo working on
+    message("Focal combo ", focal_combo_num, " of ", nrow(sig_combos), " (", focal_pc, ", ", focal_threat, ")")
+    # filter data to focal PC only
+    focal_dat <- threat_pc_long[threat_pc_long[["PC"]] == focal_pc, ]
+    # run testing function for mean shift and log variance ratio
+    focal_res <- test_meanshift_varshift(
+      combo_number = focal_combo_num,
+      sig_combos_df = sig_combos,
+      filtered_colour_data = focal_dat,
+      n_boots = 1000,
+      threatened_spp_only = FALSE,
+      focal_sex = "both_sexes"
+    )
+  }
+)
+spec_test_res <- do.call(rbind, spec_test_res)
+
+## DEPRECATED - not run
 # Mean shift and variance inequality
 # I want to run a t-test and Levene's test on each significant PC/extinction driver combination,
 # comparing the distribution of the significant combination with that of the distribution of the 
 # same PC values of other threatened species
 # Note that this code will NOT work if you want to test sexes separately - only both together
 
-spec_test_res <- pbapply::pblapply(
-  1:nrow(sig_combos),
-  ttest_levenetest_pc_threat,
-  sig_combos_df = sig_combos, # this gives us the PC axis, threat type and focal sex
-  threat_pc_long = threat_pc_long,
-  n_boots = 1000,
-  threatened_spp_only = threatened_spp_only_par
-)
-spec_test_res <- do.call(rbind, spec_test_res)
+# spec_test_res <- pbapply::pblapply(
+#   1:nrow(sig_combos),
+#   ttest_levenetest_pc_threat,
+#   sig_combos_df = sig_combos, # this gives us the PC axis, threat type and focal sex
+#   threat_pc_long = threat_pc_long,
+#   n_boots = 1000,
+#   threatened_spp_only = threatened_spp_only_par
+# )
+# spec_test_res <- do.call(rbind, spec_test_res)
 
 # Save results as CSV
 # set filename based on parameters
 if(threatened_spp_only_par == TRUE){
-  spec_filename <- "PC_ex_driver_ttestlevtest_threatened_spp_only.csv"
+  spec_filename <- "PC_ex_driver_meanshift-logvar_threatened_spp_only.csv"
 } else if(threatened_spp_only_par == FALSE){
-  spec_filename <- "PC_ex_driver_ttestlevtest_all_spp.csv"
+  spec_filename <- "PC_ex_driver_meanshift-logvar_all_spp.csv"
 }
 
 write.csv(
@@ -705,7 +736,7 @@ mean_shift_plot <- spec_test_res %>%
     signif = ifelse(mean_shift_p < 0.05, "y", "n")
   ) %>% 
   filter(PC %in% paste0("PC", 1:6)) %>% 
-  ggplot(aes(y = ex_driver, x = mean_shift_obs, fill = signif)) + 
+  ggplot(aes(y = ex_driver, x = mean_shift_ses, fill = signif)) + 
   geom_col() + 
   geom_vline(xintercept = 0) + 
   facet_wrap(~ PC, dir = "v") + 
@@ -726,12 +757,12 @@ mean_shift_plot <- spec_test_res %>%
 mean_shift_plot
 
 # and significant variance inequality drivers - vertical bars
-var_inequal_plot <- spec_test_res %>% 
+log_var_ratio_plot <- spec_test_res %>% 
   filter(
-    var_inequal_p < 0.05
+    log_var_ratio_p < 0.05
   ) %>% 
   filter(PC %in% paste0("PC", 1:6)) %>% 
-  ggplot(aes(x = ex_driver, y = var_inequal_es, fill = ex_driver)) + 
+  ggplot(aes(x = ex_driver, y = log_var_ratio_es, fill = ex_driver)) + 
   geom_col() + 
   facet_wrap(~ PC) + 
   labs(x = element_blank(), y = "Effect size (variance inequality)", fill = "Extinction driver") +
@@ -744,20 +775,21 @@ var_inequal_plot <- spec_test_res %>%
          legend.position.inside = c(0.8, 0.15), 
          legend.direction = "horizontal", 
          legend.text.position = "bottom") 
-var_inequal_plot
+log_var_ratio_plot
 
 # horizontal bars
-var_inequal_plot <- spec_test_res %>% 
+log_var_ratio_plot <- spec_test_res %>% 
   # filter(
-  #   var_inequal_p < 0.05
+  #   log_var_ratio_p < 0.05
   # ) %>% 
   mutate(
-    signif = ifelse(var_inequal_p < 0.05, "y", "n"),
+    signif = ifelse(log_var_ratio_p < 0.05, "y", "n"),
     sd_diff = ifelse(delta_sd > 0, "pos", "neg")
   ) %>% 
   filter(PC %in% paste0("PC", 1:6)) %>% 
-  ggplot(aes(y = ex_driver, x = var_inequal_es, colour = signif, fill = sd_diff)) + 
+  ggplot(aes(y = ex_driver, x = log_var_ratio_ses, fill = signif)) + 
   geom_col(linewidth = 1) + 
+  geom_vline(xintercept = 0) + 
   facet_wrap(~ PC) + 
   labs(y = "Extinction driver", x = "Effect size (variance inequality)") + 
   scale_y_discrete(
@@ -770,11 +802,11 @@ var_inequal_plot <- spec_test_res %>%
       "acc_mort" = "Accidental Mortality"
     )
   ) +
-  scale_colour_discrete(palette = c(adjustcolor("lightgrey", alpha = 0.0001), "black")) + 
-  scale_fill_discrete(palette = c(adjustcolor("darkblue", alpha = 0.8), adjustcolor("darkred", alpha = 0.8))) +
+  scale_fill_discrete(palette = c(adjustcolor("lightgrey"), "grey25")) + 
+#  scale_fill_discrete(palette = c(adjustcolor("darkblue", alpha = 0.8), adjustcolor("darkred", alpha = 0.8))) +
   theme_bw() + 
   theme(legend.position = "none")
-var_inequal_plot
+log_var_ratio_plot
 
 # save plots
 if(threatened_spp_only_par == TRUE){
@@ -806,6 +838,9 @@ ggsave(
 
 # compute correlation matrix to see if suites of threats act together
 # in terms of mean shifts
+library(RColorBrewer)
+col_pal <- colorRampPalette(brewer.pal(10, "PiYG"))(256)
+
 data_cor <- tidyr::pivot_wider(spec_test_res[, c("PC", "ex_driver", "mean_shift_obs")], names_from = PC, values_from = mean_shift_obs)
 data_cor_rownames <- data_cor$ex_driver
 data_cor <- t(as.matrix(data_cor[, paste0("PC", 1:7)]))
@@ -813,7 +848,26 @@ data_cor[which(is.na(data_cor))] <- 0
 colnames(data_cor) <- data_cor_rownames
 cor_mat_meanshift <- cor(data_cor)
 diag(cor_mat_meanshift) <- NA
-heatmap(cor_mat_meanshift)
+heatmap(cor_mat_meanshift, symm = TRUE, col = col_pal)
+
+
+# delve more deeply into threat covariance
+# plot correlation between these two traits across PCs
+data_cor <- tidyr::pivot_wider(spec_test_res[, c("PC", "ex_driver", "mean_shift_obs")], names_from = PC, values_from = mean_shift_obs)
+data_cor_rownames <- data_cor$ex_driver
+data_cor <- t(data_cor[, paste0("PC", 1:7)])
+colnames(data_cor) <- data_cor_rownames
+data_cor <- as.data.frame(data_cor)
+data_cor$PC <- rownames(data_cor)
+
+data_cor %>% 
+  ggplot(aes(x = hab_loss, y = clim_chan)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+GGally::ggpairs(
+  data_cor[, c("hab_loss", "hunt_col", "clim_chan", "invas_spec", "acc_mort", "pollut")],
+  lower = list(continuous = GGally::wrap("smooth", method = "lm", colour = "blue"))
+  )
 
 
 # check if inequality of variance SES is associated with mean shift SES

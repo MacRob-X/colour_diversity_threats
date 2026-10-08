@@ -482,7 +482,7 @@ test_meanshift_varshift <- function(
   }
   
   # display focal combination
-  message(paste0("Working on ", focal_threat, ", ", focal_pc))
+ # message(paste0("Working on ", focal_threat, ", ", focal_pc))
   
   # discard unused columns in data
   filtered_colour_data <- filtered_colour_data[, c("jetz_species", "sex", "iucn_cat", focal_threat, "PC", "PC_value")]
@@ -518,6 +518,9 @@ test_meanshift_varshift <- function(
   obs_mean_shift <- mean(focal_distrib$PC_value) -  mean(non_focal_distrib$PC_value)
   # a log ratio >0 means the focal distribution has higher variance than the non-focal, <1 means
   # the focal distirbution has lower variance than the non-focal
+  # If the focal distrib has higher variance than non-focal, the focal extinction driver tends
+  # to act on phenotypes on the extremes of this PC (more or less, - it's a little more 
+  # nuanced)
   obs_var_ratio <- log(var(focal_distrib$PC_value) / var(non_focal_distrib$PC_value))
   
   # randomly reassign focal/non-focal extinction driver to generate null distributions of PC value/
@@ -613,12 +616,12 @@ test_meanshift_varshift <- function(
     mean_shift_es = mean_shift_es,
     mean_shift_ses = mean_shift_ses,
     mean_shift_p = p_val_ms,
-    log_var_rat_obs = obs_var_ratio, 
-    log_var_rat_null_mean = null_vr_mean, 
-    log_var_rat_sd = null_vr_sd, 
+    log_var_ratio_obs = obs_var_ratio, 
+    log_var_ratio_null_mean = null_vr_mean, 
+    log_var_ratio_sd = null_vr_sd, 
     log_var_ratio_es = var_ratio_es,
     log_var_ratio_ses = var_ratio_ses,
-    log_var_ratio_p = p_val_ms,
+    log_var_ratio_p = p_val_vr,
     sd_focal = sd_focal,
     sd_non_focal = sd_non_focal,
     delta_sd = delta_sd)
