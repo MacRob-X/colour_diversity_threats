@@ -20,8 +20,8 @@ remove_extinct <- TRUE
 
 # Load data ----
 
-# Load patch data
-patches <- readRDS("G:/My Drive/patch-pipeline/2_Patches/1_InputData/patches.250716.fixed.rds")
+# Load patch sRGB data
+orig_srgb <- readRDS("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/Aves/1_RawColourspaces/Aves.matchedsex.patches.250716.prePCAcolspaces.rds")[["sRGB"]]
 
 # load list of species with male/female colour data and threat data, with DD spp removed (and
 # EX if specified)
@@ -38,25 +38,53 @@ spp_list <- readRDS(
 
 # Analysis ----
 
-# remove specimens of unknown sex
-patches <- patches[patches$sex %in% c("M", "F"), ]
+# get long format sRGB data
+colnames(orig_srgb) <- gsub("sRGB.", "", colnames(orig_srgb))
+orig_srgb$species <- sapply(
+  strsplit(
+    rownames(orig_srgb),
+    split = "-"),
+  "[",
+  1
+)
+orig_srgb$sex <- sapply(
+  strsplit(
+    rownames(orig_srgb),
+    split = "-"),
+  "[",
+  2
+)
 
-# aggregate region values for sexes within species
-patches <- aggregate(cbind(vR, vG, vB, uR, uG, uB) ~ species + sex + region, patches, mean)
+orig_srgb_long <- tidyr::pivot_longer(
+  orig_srgb,
+  cols = r.bel:b.thr,
+  names_to = "channel.region",
+  values_to = "value", 
+)
+colsave <- colnames(orig_srgb_long)
+split <- strsplit(orig_srgb_long$channel.region, ".", fixed = T)
+split <- do.call(rbind, split)
+orig_srgb_long <- cbind(orig_srgb_long, split)
+colnames(orig_srgb_long) <- c(colsave, "channel", "region")
+orig_srgb_long <- orig_srgb_long[, which(!colnames(orig_srgb_long) %in% "channel.region")]
+orig_srgb_long <- tidyr::pivot_wider(
+  orig_srgb_long,
+  names_from = "channel",
+  values_from = "value"
+)
+orig_srgb_long <- as.data.frame(orig_srgb_long)
 
 # restrict patch data to only species in species list (with male/female colour data and threat data)
-patches <- patches[patches$species %in% spp_list, ]
+orig_srgb_long <- orig_srgb_long[orig_srgb_long$species %in% spp_list, ]
 
-# convert patch data to sRGB
-xyz <- fun.camA.ideal.ciexyz.int2poly1.expanded(vR = patches$vR*100, vG = patches$vG*100, vB = patches$vB*100)
-srgb <- convertColor(xyz, from = "XYZ", to = "sRGB", to.ref.white = "E") # 'Equal energy'
-# 2026-10-14 - need to rerun this with the above Equal energy parameter and see if it fixes 
-# discrepancy with patch-pipeline method of generating sRGB values (which goes XYZ->Lab->sRGB, 
-# rather than XYZ->sRGB)
+rownames(orig_srgb_long) <- paste(
+  orig_srgb_long$species, 
+  orig_srgb_long$sex, 
+  orig_srgb_long$region,
+  sep = "-")
 
-# add rownames for species/sex/region ID
-rownames(srgb) <- paste(patches$species, patches$sex, patches$region, sep = "-")
-colnames(srgb) <- c("r", "g", "b")
+# get format for colour clustering
+srgb <- orig_srgb_long[, c("r", "g", "b")]
 
 ## Convert patch data into image array to facilitate input into recolorize functions
 
@@ -142,6 +170,7 @@ dev.off()
 col_names <- refin_cc$centers
 colnames(col_names) <- c("r","g","b")
 col_names <- data.frame(parameter.name=paste0("p_", 1:nrow(col_names)), col_names)
+######################### TO RENAME
 col_names$colour_name_rxm <- c("Blue",
                       "Charcoal grey",
                       "Teal",
@@ -207,6 +236,7 @@ srgb_form$region <- factor(srgb_form$region, levels = regions_ord)
 # order by sex, then species, then region
 srgb_form <- with(srgb_form, srgb_form[order(srgb_form$sex, srgb_form$species, srgb_form$region), ])
 
+
 # split into individual dataframes for each species/sex combo
 srgb_ind <- split(
   srgb_form,
@@ -239,7 +269,7 @@ col_classes <- readRDS(
 )
 
 
-# function to recolorize and run adjacncy analysis
+# function to recolorize and save as PNG
 run_rc <- function(patch_img, col_classes, write_to_file = FALSE, spp_sex = NULL, recol_outpath = NULL) {
   
   try ({
@@ -264,6 +294,7 @@ run_rc <- function(patch_img, col_classes, write_to_file = FALSE, spp_sex = NULL
 }
 
 
+# run across each patch image
 recol_imgs <- lapply(
   1:length(patch_imgs),
   function(img_num){
@@ -274,13 +305,27 @@ recol_imgs <- lapply(
     
     image <- patch_imgs[[img_num]]
     
-    run_rc(
+    recolorized_imgs <- run_rc(
       image,
       col_classes = col_classes,
       write_to_file = TRUE,
       spp_sex = spp_sex,
-      recol_outpath = "C:/Users/bop23rxm/Documents/recolorize_patch_images"
+      recol_outpath = here::here("04_output_plots", "07_recolorize_image_feature_metrics", "recolorize_patch_images")
     )
     
+    return(recolorized_imgs)
   }
+)
+
+# save for later
+recol_filename <- if(remove_extinct){
+  "recolorize_images_remove_EX.RDS"
+} else if(!remove_extinct){
+  "recolorize_images_keep_EX.RDS"
+}
+saveRDS(
+  recol_imgs,
+  here::here(
+    "03_output_data", "07_recolorize_image_feature_metrics", recol_filename
+  )
 )
