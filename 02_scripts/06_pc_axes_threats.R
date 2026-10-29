@@ -62,11 +62,12 @@ umap <- readRDS(umap_path)[["layout"]]
 # Data preparation ----
 
 
-# Exclude Data Deficient (DD), Extinct (EX) and Extinct in the Wild (EW) species
-# threat_matrix <- threat_matrix %>% 
-#   filter(
-#     !(iucn_cat %in% c("DD", "EX", "EW"))
-#   )
+# Exclude Data Deficient (DD) species (already done at taxonomy matching stage,
+# duplicating here for completeness)
+threat_data <- threat_data %>%
+  filter(
+    !(iucn_cat %in% c("DD"))
+  )
 
 
 # can make a long version of threat matrix (pivot on threats)
@@ -101,6 +102,25 @@ threat_umap <- threat_data %>%
   )
 # this throws a warning but it's just because we have male and female data together
 # - it's not a problem
+
+# save list of species for which we have male/female colour data and threat data for use
+# in other scripts
+spp_list <- threat_umap %>% 
+  pull(
+    jetz_species
+  ) %>% 
+  unique()
+spp_list_filename <- if(remove_extinct){
+  "species_list_remove_EX.RDS"
+} else if(!remove_extinct){
+  "species_list_keep_EX.RDS"
+}
+saveRDS(
+  spp_list,
+  here::here(
+    "03_output_data", "06_pc_axes_threats", spp_list_filename
+  )
+)
 
 # Plotting ----
 
@@ -442,7 +462,9 @@ ggpubr::annotate_figure(
 
 # Statistics ----
 
-# Perform a Cramer-von Mises test to check for difference in distribution of PC values between 
+## Wasserstein distance permutation test ----
+
+# Compute Wasserstein distance to check for difference in distribution of PC values between 
 # species threatened by focal extinction driver and species not threatened by focal driver
 # excludes threatened species for which there is
 # no threat data
@@ -458,40 +480,6 @@ ggpubr::annotate_figure(
 threat_types <- c(hab_loss = "hab_loss", hunt_col = "hunt_col", invas_spec = "invas_spec", clim_chan = "clim_chan", pollut = "pollut", acc_mort = "acc_mort")
 pcs <- paste0("PC", 1:7)
 
-# # Run across PCs/extinction drivers
-# pc_ex_drive_res <- pbapply::pblapply(
-#   
-#   threat_types,
-#   
-#   function(threat_type){
-#     
-#     cvm <- pbapply::pblapply(
-#       pcs, 
-#       test_pc_threat,
-#       threat_pc_long = threat_pc_long,
-#       threat = threat_type,
-#       n = 1000,
-#       seed = 42,
-#       return_distrib = FALSE,
-#       stat_test = "wass"
-#     )
-#     names(cvm) <- pcs
-#     cvm <- data.table::rbindlist(cvm, idcol = "PC")
-#     # Bonferroni correction for p-values
-#     # cvm$p_adjusted <- p.adjust(cvm$p_value, method = "bonferroni")
-#     return(cvm)
-#     
-#   }
-#   
-# )
-# pc_ex_drive_res <- do.call(rbind, pc_ex_drive_res)
-# # Bonferroni correction for p-values
-# pc_ex_drive_res$p_adjusted <- p.adjust(pc_ex_drive_res$p_value, method = "bonferroni")
-
-# compare to results just from using twosamples::wass_test (which uses essentially the
-# same permutation test to determine a count-based p-value)
-# ## THIS IS WHAT I SHOULD ACTUALLY USE - no benefit of using my own code to do the same thing
-# and twosamples does the same thing much faster
 sexes <- c("both_sexes")
 threatened_spp_only_par <- FALSE
 res_twosamples <- lapply(
@@ -561,42 +549,11 @@ write.csv(
   )
 )
 
-# Comparison to my own function for calculating SES/ES/p-value
-# NOTE that I am no longer using my own function - it does the same thing as the twosamples function
-# and is much slower
-# This code snippet is no longer necessary
-# ordered_ts_res <- res_twosamples %>% 
-#   arrange(p_value)
-# ordered_wass_res <- wass_res_new %>% 
-#   arrange(p_value)
-# identical(ordered_ts_res[, c("PC", "extinction_driver")], ordered_wass_res[, c("PC", "extinction_driver")])
-# full_res <- ordered_ts_res %>% 
-#   full_join(
-#     ordered_wass_res, by = c("PC", "extinction_driver")
-#   )
-# plot(p_value.y ~ p_value.x, data = full_res)
-# mod <- lm(p_value.y ~ p_value.x, data = full_res)
-# mod
-# summary(mod)
-# # essentially the same p-value order - I'm guessing the tiny amount of variation is because of
-# # stochasticity in the permutation testing
-# # check that all significant results are significant under both methods, and same for non-significant
-# # results
-# identical(full_res[full_res$p_value.x < 0.05, ], full_res[full_res$p_value.y < 0.05, ])
-# identical(full_res[full_res$p_value.x > 0.05, ], full_res[full_res$p_value.y > 0.05, ])
-# 
-# # same for adjusted p-values
-# full_res <- full_res %>% 
-#   mutate(
-#     p_value.x_adj = p.adjust(p_value.x),
-#     p_value.y_adj = p.adjust(p_value.y)
-#   )
-# identical(full_res[full_res$p_value.x_adj < 0.05, ], full_res[full_res$p_value.y_adj < 0.05, ])
-# identical(full_res[full_res$p_value.x_adj > 0.05, ], full_res[full_res$p_value.y_adj > 0.05, ])
 
 ### NOTE 2026-03-25
 ### HAVE INCORPORATED SEX-SPECIFIC ANALYSIS UP TO HERE, BUT NEED TO INCORPORATE IT INTO THE BELOW
 
+## Mean shift and variance shift permutation tests ----
 
 # Keep only the axes for which p-value (from twosamples results) < 0.05
 # Use this because SES is unreliable for skewed distributions of null statistics
@@ -658,22 +615,6 @@ spec_test_res <- lapply(
 )
 spec_test_res <- do.call(rbind, spec_test_res)
 
-## DEPRECATED - not run
-# Mean shift and variance inequality
-# I want to run a t-test and Levene's test on each significant PC/extinction driver combination,
-# comparing the distribution of the significant combination with that of the distribution of the 
-# same PC values of other threatened species
-# Note that this code will NOT work if you want to test sexes separately - only both together
-
-# spec_test_res <- pbapply::pblapply(
-#   1:nrow(sig_combos),
-#   ttest_levenetest_pc_threat,
-#   sig_combos_df = sig_combos, # this gives us the PC axis, threat type and focal sex
-#   threat_pc_long = threat_pc_long,
-#   n_boots = 1000,
-#   threatened_spp_only = threatened_spp_only_par
-# )
-# spec_test_res <- do.call(rbind, spec_test_res)
 
 # Save results as CSV
 # set filename based on parameters
@@ -696,9 +637,9 @@ write.csv(
 threatened_spp_only_par <- FALSE
 # set filename based on parameters
 if(threatened_spp_only_par == TRUE){
-  spec_filename <- "PC_ex_driver_ttestlevtest_threatened_spp_only.csv"
+  spec_filename <- "PC_ex_driver_meanshift-logvar_threatened_spp_only.csv"
 } else if(threatened_spp_only_par == FALSE){
-  spec_filename <- "PC_ex_driver_ttestlevtest_all_spp.csv"
+  spec_filename <- "PC_ex_driver_meanshift-logvar_all_spp.csv"
 }
 spec_test_res <- read.csv(
   file = here::here(
@@ -810,11 +751,11 @@ log_var_ratio_plot
 
 # save plots
 if(threatened_spp_only_par == TRUE){
-  ms_plot_filename <- "PC_ex_driver_ttestmeanshift_threatened_spp_only.svg"
-  vi_plot_filename <- "PC_ex_driver_levtestvarinequality_threatened_spp_only.svg"
+  ms_plot_filename <- "PC_ex_driver_meanshift_threatened_spp_only.svg"
+  vi_plot_filename <- "PC_ex_driver_logvarratio_threatened_spp_only.svg"
 } else if(threatened_spp_only_par == FALSE){
-  ms_plot_filename <- "PC_ex_driver_ttestmeanshift_all_spp.svg"
-  vi_plot_filename <- "PC_ex_driver_levtestvarinequality_all_spp.svg"
+  ms_plot_filename <- "PC_ex_driver_meanshift_all_spp.svg"
+  vi_plot_filename <- "PC_ex_driver_logvarratio_all_spp.svg"
 }
 ggsave(
   filename = ms_plot_filename,
@@ -827,7 +768,7 @@ ggsave(
 )
 ggsave(
   filename = vi_plot_filename,
-  plot = var_inequal_plot, 
+  plot = log_var_ratio_plot, 
   device = "svg", 
   path = here::here(
     "04_output_plots", "06_pc_axes_threats", "02_distributional_differences"
@@ -874,119 +815,3 @@ GGally::ggpairs(
 mod <- lm(abs(mean_shift_ses) ~ abs(var_inequal_ses), data = spec_test_res)
 summary(mod)
 # no, not associated
-
-# Same, but using Levene's test for equality of variances between two distributions - this will
-# tell me if one distribution is more clustered around the mean than another
-
-
-focal_distrib <- threat_pc_long %>% 
-  filter(
-    iucn_cat != "LC",
-  ) %>% 
-  filter(
-    PC == focal_combo$PC,
-    ex_driver == focal_combo$extinction_driver
-  )
-non_focal_distrib <- threat_pc_long %>% 
-  filter(
-    iucn_cat != "LC"
-  ) %>% 
-  filter(
-    PC == focal_combo$PC,
-    ex_driver != focal_combo$extinction_driver
-  ) %>% 
-  mutate(
-    ex_driver = "non_focal"
-  )
-mod_dat <- focal_distrib %>% 
-  bind_rows(
-    non_focal_distrib
-  ) %>% 
-  select(
-    PC, ex_driver, PC_value
-  )
-
-obs_t_stat <- t.test(PC_value ~ ex_driver, data = mod_dat)$statistic
-null_distribs <- lapply(1:1000, 
-                        function(i){
-                          sample_rows <- sample(
-                            1:nrow(mod_dat),
-                            size = length(focal_distrib$PC_value),
-                            replace = FALSE
-                          )
-                          sample_distrib <- mod_dat[, c("ex_driver", "PC_value")]
-                          sample_distrib[sample_rows, "ex_driver"] <- focal_combo$extinction_driver
-                          sample_distrib[-sample_rows, "ex_driver"] <- "non_focal"
-                          return(sample_distrib)
-                        }
-)
-null_t_stats <- unlist(
-  lapply(
-    null_distribs,
-    function(sample){
-      null_t_stat <- t.test(PC_value ~ ex_driver, data = sample)$statistic
-      return(null_t_stat)
-    }
-  )
-)
-null_mean <- mean(null_t_stats)
-null_sd <- sd(null_t_stats)
-ses <- (obs_t_stat - null_mean) / null_sd
-
-t_mod <- t.test(PC_value ~ ex_driver, data = mod_dat)
-t_mod
-summary(t_mod)
-
-threat_col_sig_combos <- threat_pc_long %>% 
-  filter(
-    iucn_cat != "LC",
-  ) %>% 
-  mutate(
-    combo = paste(PC, ex_driver, sep = "_")
-  ) %>% 
-  filter(
-    combo %in% sig_combos$combo
-  )
-
-library(lme4)
-mean_shift_mod <- lme4::glmer(PC_value ~ 1 + ex_driver + (1 | PC), data = threat_col_sig_combos)
-
-mean_shift_mod
-summary(mean_shift_mod)
-
-threat_col_sig_combos %>% 
-  ggplot(aes(x = ex_driver, y = PC_value, fill = ex_driver)) + 
-  geom_boxplot() + 
-  stat_smooth(method = "lm", fullrange = T) + 
-  facet_wrap(~ PC)
-
-plot(mean_shift_mod)
-
-mean_shift_mods <- pbapply::pblapply(
-  sig_combos$combo,
-  function(var_combo){
-    
-    combos <- sig_combos %>% 
-      combo = var_combo
-    
-    focal_distrib <- threat_col_sig_combos %>% 
-      filter(
-        combo == var_combo,
-      ) %>% 
-      pull(
-        PC_value
-      )
-    non_focal_distrib <- threat_col_sig_combos %>% 
-      filter(
-        pc == unique(combos$PC),
-        ex_driver 
-      )
-    
-    mod <- lm()
-    
-  }
-)
-
-
-
-
