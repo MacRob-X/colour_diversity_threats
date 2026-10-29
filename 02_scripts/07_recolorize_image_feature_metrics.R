@@ -9,6 +9,8 @@ rm(list=ls())
 
 # Load libraries ----
 library(recolorize)
+library(ggplot2)
+library(scico)
 
 # Read in cone catch functions -----
 # maps pixels in NEF image to cone stimulation values
@@ -23,6 +25,9 @@ remove_extinct <- TRUE
 # Load patch sRGB data
 orig_srgb <- readRDS("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/Aves/1_RawColourspaces/Aves.matchedsex.patches.250716.prePCAcolspaces.rds")[["sRGB"]]
 
+# Load patch Lab data (for luminance values)
+lab <- readRDS("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/Aves/1_RawColourspaces/Aves.matchedsex.patches.250716.prePCAcolspaces.rds")[["lab"]]
+
 # load list of species with male/female colour data and threat data, with DD spp removed (and
 # EX if specified)
 spp_list_filename <- if(remove_extinct){
@@ -36,7 +41,20 @@ spp_list <- readRDS(
   )
 )
 
+# load colour space
+clade <- "Aves"
+colspace_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/1_Raw_PCA/", clade, ".matchedsex.patches.250716.PCAcolspaces.rds")
+colour_space <- readRDS(colspace_path)[["lab"]][["x"]]
+colour_space <- as.data.frame(colour_space)
+
+# load UMAP space
+umap_path <- paste0("G:/My Drive/patch-pipeline/2_Patches/3_OutputData/", clade, "/2_PCA_ColourPattern_spaces/2_UMAP/", clade, ".matchedsex.patches.nn.25.mindist.0.1.lab.UMAP.rds")
+umap <- readRDS(umap_path)[["layout"]]
+colnames(umap) <- c("UMAP1", "UMAP2")
+
 # Analysis ----
+
+## Prepare data ----
 
 # get long format sRGB data
 colnames(orig_srgb) <- gsub("sRGB.", "", colnames(orig_srgb))
@@ -73,6 +91,7 @@ orig_srgb_long <- tidyr::pivot_wider(
   values_from = "value"
 )
 orig_srgb_long <- as.data.frame(orig_srgb_long)
+rm(colsave)
 
 # restrict patch data to only species in species list (with male/female colour data and threat data)
 orig_srgb_long <- orig_srgb_long[orig_srgb_long$species %in% spp_list, ]
@@ -85,6 +104,8 @@ rownames(orig_srgb_long) <- paste(
 
 # get format for colour clustering
 srgb <- orig_srgb_long[, c("r", "g", "b")]
+
+## Identify broad colour classes ----
 
 ## Convert patch data into image array to facilitate input into recolorize functions
 
@@ -169,21 +190,28 @@ dev.off()
 # generate colour category names
 col_names <- refin_cc$centers
 colnames(col_names) <- c("r","g","b")
-col_names <- data.frame(parameter.name=paste0("p_", 1:nrow(col_names)), col_names)
-######################### TO RENAME
-col_names$colour_name_rxm <- c("Blue",
-                      "Charcoal grey",
-                      "Teal",
-                      "Dark brown",
-                      "Light brown",
-                      "Beige",
-                      "Sand",
-                      "Dark red",
-                      "Brick red",
-                      "Olive green",
-                      "Ochre",
+col_names <- data.frame(
+  parameter_name = paste0("p_", 1:nrow(col_names)),
+  class_number = 1:nrow(col_names),
+  col_names
+  )
+# assign colour names (note: subjective)
+col_names$colour_name_rxm <- c("Dark Cerulean",
+                      "Teal-Grey",
+                      "Charcoal Blue",
+                      "Blue Slate",
+                      "Moss Green",
+                      "Dark Charcoal Brown",
+                      "Dark Taupe",
+                      "Light Taupe",
+                      "Mid Beige",
+                      "Deep Terracotta",
+                      "Cinnamon Terracotta",
+                      "Olive Brown",
+                      "Golden Olive",
                       "Gold",
-                      "Orange")
+                      "Ochre"
+                      )
 colour_filename <- if(remove_extinct){
   "colour_classes_remove_EX.csv"
 } else if(!remove_extinct){
@@ -197,7 +225,9 @@ write.csv(
   , row.names = F
 )
 
-## Use adjacency and boundary strength analysis to derive image feature metrics ----
+
+
+## Impose colour classes on patch data ----
 
 # First need to get patch representation of each species/sex combo as image
 
@@ -262,6 +292,11 @@ patch_imgs <- lapply(
 # Impose global colour classes on each patch image
 
 # load colour classes
+colour_class_filename <- if(remove_extinct){
+  "colour_classes_remove_EX.RDS"
+} else if(!remove_extinct){
+  "colour_classes_keep_EX.RDS"
+}
 col_classes <- readRDS(
   here::here(
     "03_output_data", "07_recolorize_image_feature_metrics", colour_class_filename
@@ -310,12 +345,16 @@ recol_imgs <- lapply(
       col_classes = col_classes,
       write_to_file = TRUE,
       spp_sex = spp_sex,
-      recol_outpath = here::here("04_output_plots", "07_recolorize_image_feature_metrics", "recolorize_patch_images")
+      #recol_outpath = here::here("04_output_plots", "07_recolorize_image_feature_metrics", "recolorize_patch_images")
+      recol_outpath = "C:/Users/bop23rxm/Documents/recolorize_patch_images"
     )
     
     return(recolorized_imgs)
   }
 )
+
+# add species/sex names
+names(recol_imgs) <- names(patch_imgs)
 
 # save for later
 recol_filename <- if(remove_extinct){
@@ -329,3 +368,344 @@ saveRDS(
     "03_output_data", "07_recolorize_image_feature_metrics", recol_filename
   )
 )
+
+
+## Use adjacency and boundary strength analysis to derive image feature metrics ----
+
+# reload recolorized patch images if needed
+recol_filename <- if(remove_extinct){
+  "recolorize_images_remove_EX.RDS"
+} else if(!remove_extinct){
+  "recolorize_images_keep_EX.RDS"
+}
+recol_imgs <- readRDS(
+  here::here(
+    "03_output_data", "07_recolorize_image_feature_metrics", recol_filename
+  )
+) 
+
+# load colour class numbers and names
+colour_filename <- if(remove_extinct){
+  "colour_classes_remove_EX.csv"
+} else if(!remove_extinct){
+  "colour_classes_keep_EX.csv"
+}
+col_names <- read.csv(
+  here::here(
+    "03_output_data", "07_recolorize_image_feature_metrics", colour_filename
+  )
+)
+
+
+
+## Compute metrics -----
+
+### Mean and max luminance ----
+mean_lum <- rowMeans(lab[, grep("L.", colnames(lab))]) # subset to columns with luminance values
+max_lum <- apply(
+  lab[, grep("L.", colnames(lab))],
+  1,
+  max
+)
+# combine into single dataframe
+lum <- data.frame(
+  mean_lum,
+  max_lum
+)
+
+### Contrast between dorsal and ventral mean luminance (countershading) ----
+# for dorsal, use patch luminance for crown, nape, mantle, rump
+mean_dorsal <- rowMeans(lab[, which(colnames(lab) %in% c("L.cro", "L.nap", "L.man", "L.rum"))])
+# for ventral, use throat, breast, belly
+mean_ventral <- rowMeans(lab[, which(colnames(lab) %in% c("L.thr", "L.bre", "L.man", "L.bel"))])
+# get difference in dorsal and ventral luminance
+# positive values indicate darker dorsal, lighter ventral (i.e. countershading)
+# negative values indicate lighter dorsal, darker ventral (i.e. reverse countershading)
+countershading <- data.frame(countershading = mean_ventral - mean_dorsal)
+
+### Colourfulness (number of colour classes) ----
+
+# function to count colour classes in a single image
+count_col_classes <- function(recolorized_img){
+  
+  n_cols <- length(
+    unique(
+      as.vector(recolorized_img$pixel_assignments)
+    )
+  )
+  
+  return(n_cols)
+  
+}
+
+
+# apply across all images
+colourfulness <- unlist(
+  lapply(
+    recol_imgs,
+    count_col_classes
+  )
+)
+colourfulness_df <- as.data.frame(colourfulness)
+rownames(colourfulness_df) <- gsub(".", "-", rownames(colourfulness_df), fixed = TRUE)
+
+
+### Proportion of each colour class ----
+
+# function to calculate proportion of a single colour class in a single image
+prop_col_class <- function(recolorized_img, col_class_number){
+  
+  # ensure colour class number is numeric
+  col_class_number <- as.numeric(col_class_number)
+  
+  n_class <- length(
+    which(
+      as.vector(recolorized_img$pixel_assignments) == col_class_number
+    )
+  )
+  
+  prop_class <- n_class / 10 # total number of patches in each patch representation
+
+  return(prop_class)
+  
+}
+
+# apply across all images for a single colour class
+# use class 10 (browny red)
+class_10_prop <- unlist(
+  lapply(
+    recol_imgs,
+    prop_col_class,
+    col_class_number = 10
+  )
+)
+hist(class_10_prop)
+head(sort(class_10_prop[which(class_10_prop > 0)], decreasing = TRUE), 20)
+
+
+# apply across all images for all colour classes
+class_props_list <- lapply(
+  col_names$class_number,
+  function(class_num){
+    props <- unlist(
+      lapply(
+        recol_imgs,
+        prop_col_class,
+        col_class_number = class_num
+      )
+    )
+    return(props)
+  }
+)
+names(class_props_list) <- col_names$parameter_name
+
+# inspect the highest proportion species of a given colour class
+col_class_param <- "p_1"
+head(
+  sort(
+    class_props_list[[col_class_param]][which(class_props_list[[col_class_param]] > 0)], 
+    decreasing = TRUE
+  ), 
+  10
+)
+
+# convert to dataframe
+class_props <- as.data.frame(do.call(cbind, class_props_list))
+rownames(class_props) <- gsub(".", "-", rownames(class_props), fixed = TRUE)
+
+
+# Combine metrics together in one dataframe with PC and UMAP axes
+
+
+# merge UMAP data to raw colour space
+colsp_umap <- merge(
+  colour_space,
+  umap,
+  by = "row.names"
+)
+rownames(colsp_umap) <- colsp_umap$Row.names
+colsp_umap$Row.names <- NULL
+
+# merge to mean and max luminance
+colsp_metrics <- merge(
+  colsp_umap,
+  lum,
+  by = "row.names"
+)
+rownames(colsp_metrics) <- colsp_metrics$Row.names
+colsp_metrics$Row.names <- NULL
+
+# merge to countershading
+colsp_metrics <- merge(
+  colsp_metrics,
+  countershading,
+  by = "row.names"
+)
+rownames(colsp_metrics) <- colsp_metrics$Row.names
+colsp_metrics$Row.names <- NULL
+
+# merge to colour class proportions
+colsp_metrics <- merge(
+  colsp_metrics,
+  class_props,
+  by = "row.names"
+)
+rownames(colsp_metrics) <- colsp_metrics$Row.names
+colsp_metrics$Row.names <- NULL
+
+# merge to colourfulness
+colsp_metrics <- merge(
+  colsp_metrics,
+  colourfulness_df,
+  by = "row.names"
+)
+rownames(colsp_metrics) <- colsp_metrics$Row.names
+colsp_metrics$Row.names <- NULL
+
+# Save as CSV
+metrics_filename <- if(remove_extinct){
+  paste("handcrafted_colour_metrics", "remove_EX.csv", sep = "_")
+} else if(!remove_extinct){
+  paste("handcrafted_colour_metrics", "keep_EX.csv", sep = "_")
+}
+write.csv(
+  colsp_metrics,
+  here::here(
+    "03_output_data", "07_recolorize_image_feature_metrics",
+    metrics_filename
+  )
+)
+
+
+# Plot metrics on PC/UMAP axes ----
+# easier to do parts of this with tidyverse
+library(dplyr)
+
+
+# Plot metric on colour space axes
+# choose metric to plot
+plot_metr <- "colourfulness"
+# choose axes to plot
+ax_1 <- "UMAP1"
+ax_2 <- "UMAP2"
+# sort data by metric first (makes plot interpretation easier)
+# for countershading, this can be positive or negative, so we sort by the absolute value
+# this will plot the most extremely countershaded or reverse-countershaded species on top
+# to plot the least countershaded (i.e. smallest absolute countershading values) on top,
+# add rev() around order() in the below line
+sorted_dat <- colsp_metrics[order(abs(colsp_metrics[[plot_metr]])), ]
+metric_plot <- ggplot(sorted_dat, aes(x = get(ax_1), y = get(ax_2), fill = get(plot_metr))) + 
+  geom_point(
+    shape = 21,
+    colour = "transparent"
+  ) + 
+  labs(x = ax_1, y = ax_2, fill = plot_metr) + 
+  scale_fill_continuous(trans = "reverse") +
+  theme_minimal() +
+  coord_fixed(ratio = 1) +
+  guides(fill = guide_colourbar(reverse = TRUE))
+
+# adjust colour palette to suit metric (e.g. countershading needs a divergent palette)
+if(plot_metr == "countershading"){
+  max_val <- max(abs(colsp_metrics[[plot_metr]]))
+  metric_plot <- metric_plot + 
+    scale_fill_scico(
+      palette = "vik", 
+      limits = c(-max_val, max_val),
+      trans = "reverse"
+      )
+} else if(plot_metr %in% c("mean_lum", "max_lum")){
+  metric_plot <- metric_plot + 
+    scale_fill_viridis_c(
+      limits = c(0, 100)
+    )
+} else if(plot_metr == "colourfulness"){
+  metric_plot <- metric_plot + 
+    scale_fill_viridis_c()
+}
+metric_plot
+
+
+
+
+# Plot all proportions of colour classes on axes, faceted by colour class
+# Choose axes to plot
+ax_1 <- "UMAP1"
+ax_2 <- "UMAP2"
+
+# create plot for each colour class (have to do it this way rather than faceting to preserve
+# highlighting and ordering non-zero proportion values)
+col_class_plots <- lapply(
+  col_names[["parameter_name"]],
+  function(col_class_param){
+    
+    # plot (set all zero-value points to be very transparent and below non-zero values)
+    # first order by increasing colour class proportion, to make plot interpretation easier (
+    # plots the higher values on top)
+    sorted_dat <- colsp_metrics[order(colsp_metrics[[col_class_param]]), ]
+    class_plot <- ggplot() + 
+      geom_point(
+        data = colsp_metrics[colsp_metrics[, col_class_param] == 0, ], 
+        aes(x = get(ax_1), y = get(ax_2)), 
+        shape = 21,
+        alpha = 0.1,
+        colour = "lightgrey",
+        fill = "lightgrey"
+      ) + 
+      geom_point(
+        data = sorted_dat[sorted_dat[[col_class_param]] > 0, ], 
+        aes(x = get(ax_1), y = get(ax_2), fill = get(col_class_param)), 
+        shape = 21,
+      #  size = 2,
+        colour = "transparent"
+      ) + 
+      labs(fill = col_class_param) + 
+      scale_fill_continuous(trans = "reverse", limits = c(0, 1)) + 
+      theme_minimal() +
+      theme(axis.title.x = element_blank(), axis.title.y = element_blank()) +
+      coord_fixed(ratio = 1) +
+      guides(fill = guide_colourbar(reverse = TRUE)) # reverse legend direction
+    
+    return(class_plot)
+    
+  }
+)
+
+# plot all of them on one plot
+combined_plot <- ggpubr::annotate_figure(
+  ggpubr::ggarrange(
+    plotlist = col_class_plots,
+    labels = col_names[["parameter_name"]],
+    font.label = list(size = 10),
+    common.legend = TRUE, legend = "right"
+  ),
+  bottom = ggpubr::text_grob(ax_1),
+  left = ggpubr::text_grob(ax_2, rot = 90)
+)
+
+# save plot
+class_prop_plot_filename <- if(remove_extinct){
+    paste("colour_class_proportions", ax_1, ax_2, "remove_EX.png", sep = "_")
+  } else if(!remove_extinct){
+    paste("colour_class_proportions", ax_1, ax_2, "keep_EX.png", sep = "_")
+    }
+ggsave(
+  filename = here::here(
+    "04_output_plots", "07_recolorize_image_feature_metrics",
+    class_prop_plot_filename
+  ),
+  plot = combined_plot,
+  bg = "white",
+  width = 21, height = 21, units = "cm"
+)
+
+
+# same for colourfulness
+
+colour_space <- merge(
+  colsp_umap,
+  colourfulness_df,
+  by = "row.names"
+)
+ggplot(colour_space[colour_space$colourfulness_res > 2, ], aes(x = PC7, y = PC8, colour = colourfulness_res, fill = colourfulness_res)) + 
+  geom_point(alpha = 0.5)
