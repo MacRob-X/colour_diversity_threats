@@ -90,7 +90,12 @@ threat_data <- threat_data %>%
 
 # get threat data with handcrafted colour metrics
 # remove PCs from colour metrics before attaching to threat data (no need to duplicate)
-metric_names <- c("mean_lum", "max_lum", "countershading", "colourfulness", paste0("p_", 1:15))
+metric_names <- c(
+  "mean_lum", "max_lum", "var_lum",
+  "countershading", 
+  "num_colour_classes", "mean_pairwise_dist", "var_pairwise_dist",
+  paste0("p_", 1:15)
+  )
 metrics <- metrics[, which(colnames(metrics) %in% metric_names)]
 metrics$species <- sapply(strsplit(rownames(metrics), split = "-"), "[", 1)
 metrics$sex <- sapply(strsplit(rownames(metrics), split = "-"), "[", 2)
@@ -217,18 +222,7 @@ sig_combos <- sig_metric_exdrive %>%
 # test function
 # first filter data to only the focal PC (essential to save overhead, otherwise function
 # times out if you call it in an lapply because the dataset is so big)
-focal_combo_num <- 9
-focal_pc <- sig_combos[[focal_combo_num, "PC"]]
-test_data <- threat_pc_long[threat_pc_long[["PC"]] == focal_pc, ]
-debug(test_meanshift_varshift)
-test_res <- test_meanshift_varshift(
-  combo_number = focal_combo_num,
-  sig_combos_df = sig_combos,
-  filtered_colour_data = test_data,
-  n_boots = 1000,
-  threatened_spp_only = FALSE,
-  focal_sex = "both_sexes"
-)
+
 
 # now run across all combos
 spec_test_res <- lapply(
@@ -275,6 +269,8 @@ write.csv(
 
 ## Plot results ----
 
+# Currently set up to plot SES (not ES)
+
 # reload results for plotting
 threatened_spp_only_par <- FALSE
 # set filename based on parameters
@@ -300,12 +296,12 @@ mean_shift_plot <- spec_test_res %>%
   mutate(
     signif = ifelse(mean_shift_p < 0.05, "y", "n")
   ) %>% 
-  filter(metric %in% c("mean_lum", "max_lum", "countershading", "colourfulness")) %>% 
+  filter(metric %in% c("mean_lum", "max_lum", "countershading", "num_colour_classes", "mean_pairwise_dist", "var_pairwise_dist")) %>% 
   ggplot(aes(y = ex_driver, x = mean_shift_ses, fill = signif)) + 
   geom_col() + 
   geom_vline(xintercept = 0) + 
-  facet_wrap(~ metric, dir = "v") + 
-  labs(y = "Extinction driver", x = paste0("Effect size (mean shift)")) + 
+  facet_wrap(~ metric) + 
+  labs(y = "Extinction driver", x = paste0("Standardised Effect Size (mean shift)")) + 
   scale_y_discrete(
     labels = c(
       "pollut" = "Pollution",
@@ -330,12 +326,12 @@ log_var_ratio_plot <- spec_test_res %>%
     signif = ifelse(log_var_ratio_p < 0.05, "y", "n"),
     sd_diff = ifelse(delta_sd > 0, "pos", "neg")
   ) %>% 
-  filter(metric %in% c("mean_lum", "max_lum", "countershading", "colourfulness")) %>% 
+  filter(metric %in% c("mean_lum", "max_lum", "countershading", "num_colour_classes", "mean_pairwise_dist", "var_pairwise_dist")) %>% 
   ggplot(aes(y = ex_driver, x = log_var_ratio_ses, fill = signif)) + 
   geom_col(linewidth = 1) + 
   geom_vline(xintercept = 0) + 
   facet_wrap(~ metric) + 
-  labs(y = "Extinction driver", x = "Effect size (variance inequality)") + 
+  labs(y = "Extinction driver", x = "Standardised Effect Size (variance inequality)") + 
   scale_y_discrete(
     labels = c(
       "pollut" = "Pollution",
@@ -378,3 +374,94 @@ ggsave(
   ), 
   width = 180, height = 140, units = "mm"
 )
+
+
+## Colour classes 
+p_mean_shift_plot <- spec_test_res %>% 
+  # filter(
+  #   mean_shift_p < 0.05
+  # ) %>% 
+  mutate(
+    signif = ifelse(mean_shift_p < 0.05, "y", "n")
+  ) %>% 
+  filter(metric %in% paste0("p_", 1:15)) %>% 
+  mutate(metric = factor(metric, levels = paste0("p_", 1:15))) %>% 
+  ggplot(aes(y = ex_driver, x = mean_shift_ses, fill = signif)) + 
+  geom_col() + 
+  geom_vline(xintercept = 0) + 
+  facet_wrap(~ metric) + 
+  labs(y = "Extinction driver", x = paste0("Standardised Effect Size (mean shift)")) + 
+  scale_y_discrete(
+    labels = c(
+      "pollut" = "Pollution",
+      "invas_spec" = "Invasive species",
+      "hunt_col" = "Hunting & Collection",
+      "hab_loss" =  "Habitat Loss",
+      "clim_chan" =  "Climate Change",
+      "acc_mort" = "Accidental Mortality"
+    )
+  ) + 
+  scale_fill_discrete(palette = c("grey70", "grey25")) + 
+  theme_bw() + 
+  theme(legend.position = "none")
+p_mean_shift_plot
+
+# and significant variance inequality drivers -  horizontal bars
+p_log_var_ratio_plot <- spec_test_res %>% 
+  # filter(
+  #   log_var_ratio_p < 0.05
+  # ) %>% 
+  mutate(
+    signif = ifelse(log_var_ratio_p < 0.05, "y", "n"),
+    sd_diff = ifelse(delta_sd > 0, "pos", "neg")
+  ) %>% 
+  filter(metric %in% paste0("p_", 1:15)) %>% 
+  mutate(metric = factor(metric, levels = paste0("p_", 1:15))) %>% 
+  ggplot(aes(y = ex_driver, x = log_var_ratio_ses, fill = signif)) + 
+  geom_col(linewidth = 1) + 
+  geom_vline(xintercept = 0) + 
+  facet_wrap(~ metric) + 
+  labs(y = "Extinction driver", x = "Standardised Effect Size (variance inequality)") + 
+  scale_y_discrete(
+    labels = c(
+      "pollut" = "Pollution",
+      "invas_spec" = "Invasive species",
+      "hunt_col" = "Hunting & Collection",
+      "hab_loss" =  "Habitat Loss",
+      "clim_chan" =  "Climate Change",
+      "acc_mort" = "Accidental Mortality"
+    )
+  ) +
+  scale_fill_discrete(palette = c(adjustcolor("lightgrey"), "grey25")) + 
+  #  scale_fill_discrete(palette = c(adjustcolor("darkblue", alpha = 0.8), adjustcolor("darkred", alpha = 0.8))) +
+  theme_bw() + 
+  theme(legend.position = "none")
+p_log_var_ratio_plot
+
+# save plots
+if(threatened_spp_only_par == TRUE){
+  ms_plot_filename <- "colclass_props_ex_driver_meanshift_threatened_spp_only.svg"
+  vi_plot_filename <- "colclass_props_ex_driver_logvarratio_threatened_spp_only.svg"
+} else if(threatened_spp_only_par == FALSE){
+  ms_plot_filename <- "colclass_props_ex_driver_meanshift_all_spp.svg"
+  vi_plot_filename <- "colclass_props_ex_driver_logvarratio_all_spp.svg"
+}
+ggsave(
+  filename = ms_plot_filename,
+  plot = p_mean_shift_plot, 
+  device = "svg", 
+  path = here::here(
+    "04_output_plots", "08_image_feature_metrics_threats", "02_distributional_differences"
+  ), 
+  width = 180, height = 140, units = "mm"
+)
+ggsave(
+  filename = vi_plot_filename,
+  plot = p_log_var_ratio_plot, 
+  device = "svg", 
+  path = here::here(
+    "04_output_plots", "08_image_feature_metrics_threats", "02_distributional_differences"
+  ), 
+  width = 180, height = 140, units = "mm"
+)
+

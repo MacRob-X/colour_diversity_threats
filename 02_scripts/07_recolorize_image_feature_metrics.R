@@ -400,17 +400,23 @@ col_names <- read.csv(
 
 ## Compute metrics -----
 
-### Mean and max luminance ----
+### Mean, max, variance luminance ----
 mean_lum <- rowMeans(lab[, grep("L.", colnames(lab))]) # subset to columns with luminance values
 max_lum <- apply(
   lab[, grep("L.", colnames(lab))],
   1,
   max
 )
+var_lum <- apply(
+  lab[, grep("L.", colnames(lab))],
+  1,
+  var
+)
 # combine into single dataframe
 lum <- data.frame(
   mean_lum,
-  max_lum
+  max_lum,
+  var_lum
 )
 
 ### Contrast between dorsal and ventral mean luminance (countershading) ----
@@ -423,9 +429,11 @@ mean_ventral <- rowMeans(lab[, which(colnames(lab) %in% c("L.thr", "L.bre", "L.m
 # negative values indicate lighter dorsal, darker ventral (i.e. reverse countershading)
 countershading <- data.frame(countershading = mean_ventral - mean_dorsal)
 
-### Colourfulness (number of colour classes) ----
+### Colourfulness  ----
 
-# function to count colour classes in a single image
+# number of colour classes
+
+# function to count colour classes in a single recolorized image
 count_col_classes <- function(recolorized_img){
   
   n_cols <- length(
@@ -440,15 +448,78 @@ count_col_classes <- function(recolorized_img){
 
 
 # apply across all images
-colourfulness <- unlist(
+num_colour_classes <- unlist(
   lapply(
     recol_imgs,
     count_col_classes
   )
 )
-colourfulness_df <- as.data.frame(colourfulness)
-rownames(colourfulness_df) <- gsub(".", "-", rownames(colourfulness_df), fixed = TRUE)
 
+# mean pairwise distance between patches in Lab space
+lab_rn <- lab
+lab_rn$row_names <- rownames(lab)
+lab_long <- tidyr::pivot_longer(
+  lab_rn,
+  !row_names,
+  names_to = "ch.patch",
+  values_to = "value"
+)
+lab_long$ch <- sapply(
+  strsplit(
+    lab_long$ch.patch,
+    split = ".",
+    fixed = TRUE
+    ),
+  "[",
+  1
+)
+lab_long$patch <- sapply(
+  strsplit(
+    lab_long$ch.patch,
+    split = ".",
+    fixed = TRUE
+  ),
+  "[",
+  2
+)
+lab_long <- tidyr::pivot_wider(
+  lab_long,
+  id_cols = c("row_names", "patch"),
+  names_from = ch,
+  values_from = value
+  
+)
+mean_var_pairwise_dists <- lapply(
+  unique(lab_long$row_names),
+  function(spp_sex){
+    
+    dat <- as.matrix(lab_long[lab_long$row_names == spp_sex, c("L", "a", "b")])
+    
+    pairwise_dists <- vegan::vegdist(dat, method = "euclidean")
+    
+    mean_pairwise_dist <- mean(pairwise_dists)
+    var_pairwise_dist <- var(pairwise_dists)
+    
+    res <- data.frame(
+      mean_pairwise_dist,
+      var_pairwise_dist
+    )
+    return(res)
+    
+  }
+)
+names(mean_var_pairwise_dists) <- unique(lab_long$row_names)
+mean_var_pairwise_dists <- do.call(rbind, mean_var_pairwise_dists)
+
+colourfulness <- as.data.frame(num_colour_classes)
+rownames(colourfulness) <- gsub(".", "-", rownames(colourfulness), fixed = TRUE)
+colourfulness <- merge(
+  colourfulness,
+  mean_var_pairwise_dists,
+  by = "row.names"
+)
+rownames(colourfulness) <- colourfulness$Row.names
+colourfulness$Row.names <- NULL
 
 ### Proportion of each colour class ----
 
@@ -556,7 +627,7 @@ colsp_metrics$Row.names <- NULL
 # merge to colourfulness
 colsp_metrics <- merge(
   colsp_metrics,
-  colourfulness_df,
+  colourfulness,
   by = "row.names"
 )
 rownames(colsp_metrics) <- colsp_metrics$Row.names
@@ -584,7 +655,7 @@ library(dplyr)
 
 # Plot metric on colour space axes
 # choose metric to plot
-plot_metr <- "colourfulness"
+plot_metr <- "var_lum"
 # choose axes to plot
 ax_1 <- "UMAP1"
 ax_2 <- "UMAP2"
@@ -704,7 +775,7 @@ ggsave(
 
 colour_space <- merge(
   colsp_umap,
-  colourfulness_df,
+  colourfulness,
   by = "row.names"
 )
 ggplot(colour_space[colour_space$colourfulness_res > 2, ], aes(x = PC7, y = PC8, colour = colourfulness_res, fill = colourfulness_res)) + 
