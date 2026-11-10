@@ -46,7 +46,7 @@ iucn <- read.csv(
 # Analysis ----
 
 # calculate distance to centroid from colourspace
-centr_dists <- dispRity::dispRity(colour_space, metric = c(dispRity::pairwise.dist, mean))$disparity[[1]][[1]]
+centr_dists <- dispRity::dispRity(colour_space, metric = dispRity::centroids)$disparity[[1]][[1]]
 centr_dists <- data.frame(
   species = sapply(strsplit(rownames(colour_space), split = "-"), "[", 1),
   sex = sapply(strsplit(rownames(colour_space), split = "-"), "[", 2),
@@ -127,6 +127,15 @@ centr_dist_sims <- data.frame(
 )
 # remove the 'full' row, as there's by definition zero loss
 centr_dist_sims <- centr_dist_sims[centr_dist_sims$code != "full", ]
+
+# Store this to use in LMM to test disproportionality of loss from each driver
+sims_filename <- "colpat_div_loss_sims_ext_drivers.csv"
+write.csv(
+  centr_dist_sims,
+  here::here(
+    "03_output_data", "04_threat_abatements", sims_filename
+  )
+)
 
 
 # Plot absolute species richness loss vs absolute species richness loss
