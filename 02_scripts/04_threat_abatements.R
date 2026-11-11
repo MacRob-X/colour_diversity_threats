@@ -128,14 +128,6 @@ centr_dist_sims <- data.frame(
 # remove the 'full' row, as there's by definition zero loss
 centr_dist_sims <- centr_dist_sims[centr_dist_sims$code != "full", ]
 
-# Store this to use in LMM to test disproportionality of loss from each driver
-sims_filename <- "colpat_div_loss_sims_ext_drivers.csv"
-write.csv(
-  centr_dist_sims,
-  here::here(
-    "03_output_data", "04_threat_abatements", sims_filename
-  )
-)
 
 
 # Plot absolute species richness loss vs absolute species richness loss
@@ -176,6 +168,15 @@ centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_pc"] <- rep(cen
 
 # And the same for species richness loss
 centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_avoided_pc"] <- rep(centr_dist_sims[centr_dist_sims$code == "none", "sr_pc_loss"], times = 7) - centr_dist_sims[centr_dist_sims$code != "none", "sr_pc_loss"]
+
+# Store this to use in LMM to test disproportionality of loss from each driver
+sims_filename <- "colpat_div_loss_sims_ext_drivers.csv"
+write.csv(
+  centr_dist_sims,
+  here::here(
+    "03_output_data", "04_threat_abatements", sims_filename
+  )
+)
 
 # plot percentage centroid distance loss avoided vs percentage species richness loss avoided
 centr_dist_sims |> 
