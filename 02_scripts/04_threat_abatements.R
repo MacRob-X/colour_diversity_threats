@@ -45,6 +45,8 @@ iucn <- read.csv(
 
 # Analysis ----
 
+## Calculate avoided loss ----
+
 # calculate distance to centroid from colourspace
 centr_dists <- dispRity::dispRity(colour_space, metric = dispRity::centroids)$disparity[[1]][[1]]
 centr_dists <- data.frame(
@@ -130,18 +132,6 @@ centr_dist_sims <- centr_dist_sims[centr_dist_sims$code != "full", ]
 
 
 
-# Plot absolute species richness loss vs absolute species richness loss
-centr_dist_sims |> 
-  filter(
-    code != "none"
-  ) |> 
-  ggplot(aes(x = sr_loss_abs, y = mean_cd_loss_abs, colour = code)) + 
-  geom_point() + 
-  geom_smooth(method = "lm")
-# we can see that the line for 'exp' - hunting & collection - is lower than the others, which means
-# colour pattern diversity loss per number of species lost is lower when hunting & collection is
-# abated
-
 # Calculate absolute mean distance to centroid loss avoided compared with no abatement scenario
 # positive number means higher mean distance to centroid under specific abatement than no abatement
 centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_abs"] = rep(centr_dist_sims[centr_dist_sims$code == "none", "mean_cd_loss_abs"], times = 7) - centr_dist_sims[centr_dist_sims$code != "none", "mean_cd_loss_abs"]
@@ -150,17 +140,7 @@ centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_abs"] = rep(cen
 # positive number mean higher species richness under specific abatement compared with no abatement
 centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_avoided_abs"] = rep(centr_dist_sims[centr_dist_sims$code == "none", "sr_loss_abs"], times = 7) - centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_abs"]
 
-# plot absolute centroid distance loss AVOIDED vs absolute species richness loss AVOIDED
-centr_dist_sims |> 
-  filter(
-    code != "none"
-  ) |> 
-  ggplot(aes(x = sr_loss_avoided_abs, y = cd_loss_avoided_abs, colour = code)) + 
-  geom_point() + 
-  geom_smooth(method = "lm")
-# we can see that the line for 'exp' (Hunting & collection) is above the other lines - so abatement of
-# hunting and collection avoids disproportionately more loss of colour pattern diversity accounting for
-# decrease in species richness than abatement of other specific threats
+
 
 # Now get as percentages for easier comparison
 # THIS IS WHAT WE WILL ACTUALLY USE IN THE MANUSCRIPT
@@ -177,6 +157,102 @@ write.csv(
     "03_output_data", "04_threat_abatements", sims_filename
   )
 )
+
+ ## Calculate Cohen's D ----
+
+# function to calculate Cohen's D for a specific threat, compared to no abatement scenario (code == "none")
+get_cohens_d <- function(focal_driver, loss_df, diversity_type = c("spec_rich", "colour_pattern")){
+  
+  # set diversity loss column (actual loss, not avoided loss)
+  if(diversity_type == "spec_rich"){
+    # percentage species richness loss
+    div_col <- "sr_pc_loss"
+  } else if(diversity_type == "colour_pattern"){
+    # percentage colour pattern diversity loss
+    div_col <- "cd_pc_loss"
+  } else{
+    stop("Please input a valid diversity type ('spec_rish' for species richness, 'colour_pat' for colour pattern diversity)")
+  }
+  
+  # get baseline percentage colour-pattern diversity loss 
+  baseline_loss <- loss_df[loss_df$code == "none", div_col]
+  
+  # get loss under complete abatement of focal driver
+  focal_loss <- loss_df[loss_df$code == focal_driver, div_col]
+  
+  # calculate Cohen's D (measure of magnitude of difference of means between two groups)
+  cohens_d <- lsr::cohensD(baseline_loss, focal_loss)
+  
+  return(cohens_d)
+}
+
+# test on a single extinction driver
+debug(get_cohens_d)
+get_cohens_d("cli", centr_dist_sims, diversity_type = "spec_rich")
+
+# apply across extinction drivers (including abatement of all threats) for species richness
+abatement_scenarios <- c("all", "hab", "exp", "cli", "inv", "dis", "pol")
+cohens_d_sr <- lapply(
+  abatement_scenarios,
+  get_cohens_d,
+  loss_df = centr_dist_sims,
+  diversity_type = "spec_rich"
+)
+names(cohens_d_sr) <- abatement_scenarios
+# for colour pattern diversity
+cohens_d_cd <- lapply(
+  abatement_scenarios,
+  get_cohens_d,
+  loss_df = centr_dist_sims,
+  diversity_type = "colour_pattern"
+)
+names(cohens_d_cd) <- abatement_scenarios
+
+# combine into dataframe
+cohens_d_df <- data.frame(
+  abated_threat = abatement_scenarios,
+  cohens_d_sr = unlist(cohens_d_sr),
+  cohens_d_cd = unlist(cohens_d_cd)
+) 
+
+# save results as CSV
+cohens_d_filename <- "cohens_d_values_driver_specific_complete_abatament.csv"
+write.csv(
+  cohens_d_df,
+  here::here(
+    "03_output_data", "04_threat_abatements",
+    cohens_d_filename
+  ), 
+  row.names = FALSE
+)
+
+# Plotting ----
+
+
+# Plot absolute species richness loss vs absolute species richness loss
+centr_dist_sims |> 
+  filter(
+    code != "none"
+  ) |> 
+  ggplot(aes(x = sr_loss_abs, y = mean_cd_loss_abs, colour = code)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+# we can see that the line for 'exp' - hunting & collection - is lower than the others, which means
+# colour pattern diversity loss per number of species lost is lower when hunting & collection is
+# abated
+
+# plot absolute centroid distance loss AVOIDED vs absolute species richness loss AVOIDED
+centr_dist_sims |> 
+  filter(
+    code != "none"
+  ) |> 
+  ggplot(aes(x = sr_loss_avoided_abs, y = cd_loss_avoided_abs, colour = code)) + 
+  geom_point() + 
+  geom_smooth(method = "lm")
+# we can see that the line for 'exp' (Hunting & collection) is above the other lines - so abatement of
+# hunting and collection avoids disproportionately more loss of colour pattern diversity accounting for
+# decrease in species richness than abatement of other specific threats
+
 
 # plot percentage centroid distance loss avoided vs percentage species richness loss avoided
 centr_dist_sims |> 
