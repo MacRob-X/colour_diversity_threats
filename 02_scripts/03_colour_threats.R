@@ -269,7 +269,7 @@ ggsave(
 # See https://stats.stackexchange.com/questions/653148/negative-binomial-distributed-continuous-data-for-animal-modelling
 
 
-# remove species with missing (NA) threat data (N = 440 rows = 220 species)
+# remove species with missing (NA) threat data (N = 12 rows = 6 species)
 missing_threat_data <- threat_centr_clean |> 
   filter(
     is.na(ex_driver)
@@ -668,9 +668,9 @@ for(i in 1:n_trees){
 ### Plot MCMCglmm forest plots ----
 
 # Choose which model to plot
-mod_to_plot <- nonphylo_mcmcglmm_sexasfixed
+mod_to_plot <- phylo_mcmcglmm
 
-# extract fixed effects posterior samples (removing sex, species and intercept)
+# extract fixed effects posterior samples (removing sex, species, phylogeny and intercept)
 post_samples <- as.data.frame(mod_to_plot$Sol) |> 
   tidyr::pivot_longer(
     cols = everything(),
@@ -680,6 +680,7 @@ post_samples <- as.data.frame(mod_to_plot$Sol) |>
   filter(
     !grepl("jetz_species", param),
     !grepl("sex", param),
+    !grepl("PhyloName", param),
     param != "(Intercept)"
   ) |> 
   as.data.frame()

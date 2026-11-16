@@ -90,7 +90,7 @@ ext_drivers <- c("clim_chan", "hab_loss", "pollut", "hunt_col", "acc_mort", "inv
 
 # Initialise data frame to write results to
 results <- as.data.frame(matrix(NA, nrow = 1, ncol = 9))
-colnames(results) <- c("ex_driver", "species_richness", "obs_mean", "null_mean", "null_sd", "null_se", "es", "p_value" "ses")
+colnames(results) <- c("ex_driver", "species_richness", "obs_mean", "null_mean", "null_sd", "null_se", "es", "p_value", "ses")
 results$ex_driver <- c("all_species")
 
 # Get PC matrix (with species/sex as rownames)
@@ -241,6 +241,20 @@ write.csv(
 
 ## Plotting ----
 
+# Reload results
+if(latest == TRUE){
+  res_filename <- paste0(ext_par, past_threat_par, "_centroid_threat_reduction_SES_latest_2026-01-07.csv")
+} else if(latest == FALSE){
+  res_filename <- paste(ext_par, past_threat_par, "_centroid_threat_reduction_SES", cutoff_year, "cutoff_year.csv", sep = "_")
+}
+results <- read.csv(
+  here::here(
+    "03_output_data", "03b_threat_centroid_SES",
+    res_filename
+  )
+)
+
+
 # Plot results
 # plot significant meanshift drivers - horizontal bars
 results_plot <- results %>% 
@@ -248,13 +262,13 @@ results_plot <- results %>%
     ex_driver != "all_species"
   ) %>% 
   mutate(
-    signif = ifelse(abs(ses) > 2, "y", "n")
+    signif = ifelse(p_value < 0.05, "y", "n")
   ) %>% 
-  ggplot(aes(y = ex_driver, x = ses, fill = signif)) + 
+  ggplot(aes(y = ex_driver, x = es, fill = signif)) + 
   geom_col() + 
   geom_vline(xintercept = 0) + 
-  geom_vline(xintercept = -2, linetype = "dashed") + 
-  labs(y = "Extinction driver", x = paste0("Standardised Effect Size")) + 
+#  geom_vline(xintercept = -2, linetype = "dashed") + 
+  labs(y = "Extinction driver", x = paste0("Change in mean distance to centroid (observed mean - null mean)")) + 
   scale_y_discrete(
     labels = c(
       "pollut" = "Pollution",
@@ -269,3 +283,20 @@ results_plot <- results %>%
   theme_bw() + 
   theme(legend.position = "none")
 results_plot
+
+# save plot
+if(latest == TRUE){
+  plot_filename <- paste0(ext_par, past_threat_par, "centroid_threat_reduction_SES_latest_2026-01-07.svg")
+} else if(latest == FALSE){
+  plot_filename <- paste(ext_par, past_threat_par, "centroid_threat_reduction_SES", cutoff_year, "cutoff_year.svg", sep = "_")
+}
+ggsave(
+  filename = here::here(
+    "04_output_plots", "03_colour_threats",
+    plot_filename
+  ),
+  plot = results_plot,
+  device = "svg",
+  units = "mm",
+  width = 160, height = 0.75 * 160
+)
