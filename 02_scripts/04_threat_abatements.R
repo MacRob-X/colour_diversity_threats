@@ -81,14 +81,21 @@ ext <- as.matrix(ext)
 
 # get extinction matrix with centroid distances as values, with NA if species are extinct
 # separately for males and females
-cd_vector <- centr_dists[centr_dists$sex == "M", "centr_dists"]
+cd_vector_m <- centr_dists[centr_dists$sex == "M", "centr_dists"]
+cd_vector_f <- centr_dists[centr_dists$sex == "F", "centr_dists"]
 # multiple extinction matrix by centroid distance vector (this is an optimised way to run this
 # matrix/vector calculation)
-ext_centr_matrix_m <- sweep(ext, 2, cd_vector, `*`)
+ext_centr_matrix_m <- sweep(ext, 2, cd_vector_m, `*`)
 ext_centr_matrix_m[ext_centr_matrix_m == 0] <- NA
+colnames(ext_centr_matrix_m) <- paste(colnames(ext_centr_matrix_m), "M", sep = "_")
+ext_centr_matrix_f <- sweep(ext, 2, cd_vector_f, `*`)
+ext_centr_matrix_f[ext_centr_matrix_f == 0] <- NA
+colnames(ext_centr_matrix_f) <- paste(colnames(ext_centr_matrix_f), "F", sep = "_")
+
 # I can now use rowMeans to get the mean distance to centroid in
 # each scenario, which I can compare to the baseline
-ext_means <- rowMeans(ext_centr_matrix_m, na.rm = T)
+# use mean of male and female means (same as binding the columns and doing rowMeans)
+ext_means <- (rowMeans(ext_centr_matrix_m, na.rm = T) + rowMeans(ext_centr_matrix_f, na.rm = T)) / 2
 names(ext_means) <- rownames(ext_centr_matrix_m)
 
 # Do the same for species richness
@@ -143,7 +150,6 @@ centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_avoided_abs"] = rep(cen
 
 
 # Now get as percentages for easier comparison
-# THIS IS WHAT WE WILL ACTUALLY USE IN THE MANUSCRIPT
 centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_pc"] <- rep(centr_dist_sims[centr_dist_sims$code == "none", "cd_pc_loss"], times = 7) - centr_dist_sims[centr_dist_sims$code != "none", "cd_pc_loss"]
 
 # And the same for species richness loss
@@ -187,8 +193,8 @@ get_cohens_d <- function(focal_driver, loss_df, diversity_type = c("spec_rich", 
 }
 
 # test on a single extinction driver
-debug(get_cohens_d)
-get_cohens_d("cli", centr_dist_sims, diversity_type = "spec_rich")
+# debug(get_cohens_d)
+# get_cohens_d("cli", centr_dist_sims, diversity_type = "spec_rich")
 
 # apply across extinction drivers (including abatement of all threats) for species richness
 abatement_scenarios <- c("all", "hab", "exp", "cli", "inv", "dis", "pol")
@@ -216,7 +222,7 @@ cohens_d_df <- data.frame(
 ) 
 
 # save results as CSV
-cohens_d_filename <- "cohens_d_values_driver_specific_complete_abatament.csv"
+cohens_d_filename <- "cohens_d_values_driver_specific_complete_abatement.csv"
 write.csv(
   cohens_d_df,
   here::here(
@@ -269,23 +275,23 @@ centr_dist_sims |>
 
 # FOR DOTTED LINE SHOWING MEAN COLOUR PATTERN DIVERSITY LOSS AVOIDANCE PER SPECIES RICHNESS UNDER FULL ABATEMENT
 
-# Get mean % species loss avoided in full abatement ('all') scenario
+# Get mean species loss avoided in full abatement ('all') scenario
 n_sp <- ncol(ext)
 sp_loss_av_all <- centr_dist_sims |> 
   filter(
     code == "all"
   ) |> 
   pull(
-    sr_loss_avoided_pc
+    sr_loss_avoided_abs
   ) |> 
   mean()
-# Get mean % colour pattern diversity loss avoided in full abatement ('all') scenario
+# Get mean colour pattern diversity loss avoided in full abatement ('all') scenario
 cd_loss_av_all <- centr_dist_sims |> 
   filter(
     code == "all"
   ) |> 
   pull(
-    cd_loss_avoided_pc
+    cd_loss_avoided_abs
   ) |> 
   mean()
 # Use to calculate gradient of line
@@ -293,97 +299,102 @@ all_ab_grad <- cd_loss_av_all / sp_loss_av_all
 # Set intercept to 0
 all_ab_int <- 0
 
+# ######################### NOT RUN ###########################
+# # ALTERNATIVE APPROACH TO GET DOTTED LINE
+# # Get gradient and intercept of line from all 'all' simulations
+# all_ab_mod <- lm(cd_loss_avoided_pc ~ sr_loss_avoided_pc, data = centr_dist_sims)
+# all_ab_grad <- all_ab_mod$coefficients[[2]]
+# all_ab_int <- all_ab_mod$coefficients[[1]]
+# 
+# # ALTERNATIVE #2 FOR DOTTED LINE
+# # Use null simulations to get regression line of colour pattern diversity loss ~ species loss
+# # Remove 50, 100, 150, 200, 250, 300, 350 random species and see how colour pattern diversity changes 
+# # (actual range of species loss is about 100 - 300 )
+# 
+# # set sample numbers
+# n_sample_set <- seq(100, 300, by = 50)
+# sr_loss_range <- range(ext_sr_full - ext_sr_values[which(rownames(ext) != "full")])
+# n_sample_set <- sample(sr_loss_range[1]:sr_loss_range[2], size = 1000, replace = TRUE)
+# #n_sample_set <- sample(100:500, size = 1000, replace = TRUE)
+# # n_sample_set <- rnorm(1000, mean = 4000, sd = 1000)
+# # get list of species for which we have both extinction and colour data
+# spp_list <- colnames(ext)
+# 
+# # Simulate colour pattern diversity loss for given species richness loss samples
+# res_random_sample <- lapply(
+#   n_sample_set,
+#   simulate_cd_loss,
+#   spp_list = spp_list,
+#   centr_dists = centr_dists, 
+#   sex = "M", 
+#   n_iter = 1,
+#   threatened_spp_only = TRUE,
+#   iucn_dat = iucn
+# )
+# res_random_sample <- as.data.frame(do.call(rbind, res_random_sample))
+# 
+# # view results
+# res_random_sample |> 
+#   # group_by(sr_loss_abs) |> 
+#   # summarise(
+#   #   grand_mean_centr_dist = mean(mean_centr_dist),
+#   #   grand_mean_cd_loss_abs = mean(mean_cd_loss_abs),
+#   #   sd_cd_loss_abs = sd(mean_cd_loss_abs)
+#   # ) |> 
+#   ggplot(aes(x = sr_loss_abs, y = mean_cd_loss_abs)) + 
+#   geom_point() + 
+#   # geom_errorbar(aes(ymin = grand_mean_cd_loss_abs - sd_cd_loss_abs, ymax = grand_mean_cd_loss_abs + sd_cd_loss_abs), width = 0.2) + 
+#   geom_smooth(method = 'lm', formula= y ~ x)
+# # Looks like actually with random species extinction we don't expect ANY increase in loss
+# # of colour pattern diversity - how does this fit with the results I have? Does it mean that
+# # there's only an increase in colour pattern diversity loss when THREATENED species go extinct,
+# # because these are the ones that have higher distance to centroid?
+# 
+# # Convert to SR loss/CD loss AVOIDED by subtracting from baseline (no abatement) scenario
+# res_random_sample$sr_loss_avoided_abs <- centr_dist_sims[centr_dist_sims$code == "none", "sr_loss_abs"] - res_random_sample$sr_loss_abs
+# res_random_sample$cd_loss_avoided_abs <- centr_dist_sims[centr_dist_sims$code == "none", "mean_cd_loss_abs"] - res_random_sample$mean_cd_loss_abs
+# 
+# res_random_sample |> 
+#   # group_by(sr_loss_abs) |> 
+#   # summarise(
+#   #   grand_mean_centr_dist = mean(mean_centr_dist),
+#   #   grand_mean_cd_loss_abs = mean(mean_cd_loss_abs),
+#   #   sd_cd_loss_abs = sd(mean_cd_loss_abs)
+#   # ) |> 
+#   ggplot(aes(x = sr_loss_abs, y = mean_cd_loss_abs)) + 
+#   geom_point() + 
+#   # geom_errorbar(aes(ymin = grand_mean_cd_loss_abs - sd_cd_loss_abs, ymax = grand_mean_cd_loss_abs + sd_cd_loss_abs), width = 0.2) + 
+#   geom_smooth(method = 'lm', formula= y ~ x)
+# 
+# ############################### END NOT RUN ########################
 
-# ALTERNATIVE APPROACH TO GET DOTTED LINE
-# Get gradient and intercept of line from all 'all' simulations
-all_ab_mod <- lm(cd_loss_avoided_pc ~ sr_loss_avoided_pc, data = centr_dist_sims)
-all_ab_grad <- all_ab_mod$coefficients[[2]]
-all_ab_int <- all_ab_mod$coefficients[[1]]
-
-# ALTERNATIVE #2 FOR DOTTED LINE
-# Use null simulations to get regression line of colour pattern diversity loss ~ species loss
-# Remove 50, 100, 150, 200, 250, 300, 350 random species and see how colour pattern diversity changes 
-# (actual range of species loss is about 100 - 300 )
-
-# set sample numbers
-n_sample_set <- seq(100, 300, by = 50)
-sr_loss_range <- range(ext_sr_full - ext_sr_values[which(rownames(ext) != "full")])
-n_sample_set <- sample(sr_loss_range[1]:sr_loss_range[2], size = 1000, replace = TRUE)
-#n_sample_set <- sample(100:500, size = 1000, replace = TRUE)
-# n_sample_set <- rnorm(1000, mean = 4000, sd = 1000)
-# get list of species for which we have both extinction and colour data
-spp_list <- colnames(ext)
-
-# Simulate colour pattern diversity loss for given species richness loss samples
-res_random_sample <- lapply(
-  n_sample_set,
-  simulate_cd_loss,
-  spp_list = spp_list,
-  centr_dists = centr_dists, 
-  sex = "M", 
-  n_iter = 1,
-  threatened_spp_only = TRUE,
-  iucn_dat = iucn
-)
-res_random_sample <- as.data.frame(do.call(rbind, res_random_sample))
-
-# view results
-res_random_sample |> 
-  # group_by(sr_loss_abs) |> 
-  # summarise(
-  #   grand_mean_centr_dist = mean(mean_centr_dist),
-  #   grand_mean_cd_loss_abs = mean(mean_cd_loss_abs),
-  #   sd_cd_loss_abs = sd(mean_cd_loss_abs)
-  # ) |> 
-  ggplot(aes(x = sr_loss_abs, y = mean_cd_loss_abs)) + 
-  geom_point() + 
-  # geom_errorbar(aes(ymin = grand_mean_cd_loss_abs - sd_cd_loss_abs, ymax = grand_mean_cd_loss_abs + sd_cd_loss_abs), width = 0.2) + 
-  geom_smooth(method = 'lm', formula= y ~ x)
-# Looks like actually with random species extinction we don't expect ANY increase in loss
-# of colour pattern diversity - how does this fit with the results I have? Does it mean that
-# there's only an increase in colour pattern diversity loss when THREATENED species go extinct,
-# because these are the ones that have higher distance to centroid?
-
-# Convert to SR loss/CD loss AVOIDED by subtracting from baseline (no abatement) scenario
-res_random_sample$sr_loss_avoided_abs <- centr_dist_sims[centr_dist_sims$code == "none", "sr_loss_abs"] - res_random_sample$sr_loss_abs
-res_random_sample$cd_loss_avoided_abs <- centr_dist_sims[centr_dist_sims$code == "none", "mean_cd_loss_abs"] - res_random_sample$mean_cd_loss_abs
-
-res_random_sample |> 
-  # group_by(sr_loss_abs) |> 
-  # summarise(
-  #   grand_mean_centr_dist = mean(mean_centr_dist),
-  #   grand_mean_cd_loss_abs = mean(mean_cd_loss_abs),
-  #   sd_cd_loss_abs = sd(mean_cd_loss_abs)
-  # ) |> 
-  ggplot(aes(x = sr_loss_abs, y = mean_cd_loss_abs)) + 
-  geom_point() + 
-  # geom_errorbar(aes(ymin = grand_mean_cd_loss_abs - sd_cd_loss_abs, ymax = grand_mean_cd_loss_abs + sd_cd_loss_abs), width = 0.2) + 
-  geom_smooth(method = 'lm', formula= y ~ x)
-
-# Now plot the same (percentage centroid distance loss avoided vs percentage species richness loss avoided)
+# Now plot the same (absolute centroid distance loss avoided vs absolute species richness loss avoided)
 # but with means instead of full simulation distributions 
 p <- centr_dist_sims |> 
   filter(
     code != "none",
   #  code != "all"
   ) |> 
+  mutate(
+    code = factor(code, levels = c("all", "cli", "dis", "exp", "hab", "inv", "pol"))
+  ) %>% 
   group_by(code) |> 
   summarise(
-    mean_cd_loss_avoided = mean(cd_loss_avoided_pc),
-    sd_cd_loss_avoided = sd(cd_loss_avoided_pc),
-    mean_sr_loss_avoided = mean(sr_loss_avoided_pc),
-    sd_sr_loss_avoided = sd(sr_loss_avoided_pc)
+    mean_cd_loss_avoided = mean(cd_loss_avoided_abs),
+    sd_cd_loss_avoided = sd(cd_loss_avoided_abs),
+    mean_sr_loss_avoided = mean(sr_loss_avoided_abs),
+    sd_sr_loss_avoided = sd(sr_loss_avoided_abs)
   ) |> 
   ggplot(aes(x = mean_sr_loss_avoided, y = mean_cd_loss_avoided, fill = code)) + 
-  geom_errorbar(aes(xmin = mean_sr_loss_avoided - 0.5*sd_sr_loss_avoided, xmax = mean_sr_loss_avoided + 0.5*sd_sr_loss_avoided), colour = "black", width = 0.005) + 
-  geom_errorbar(aes(ymin = mean_cd_loss_avoided - 0.5*sd_cd_loss_avoided, ymax = mean_cd_loss_avoided + 0.5*sd_cd_loss_avoided), colour = "black", width = 0.02) + 
-  geom_point(shape = 21, size = 5) + 
   #### DIAGONAL LINE 
-   geom_abline(intercept = 0, slope = all_ab_grad, lty = 2) +
-  xlab("Avoided species richness loss (%)") + ylab("Avoided colour pattern diversity loss (%)") + 
+  geom_abline(intercept = 0, slope = all_ab_grad, lty = 2) +
+  geom_errorbar(aes(xmin = mean_sr_loss_avoided - 0.5*sd_sr_loss_avoided, xmax = mean_sr_loss_avoided + 0.5*sd_sr_loss_avoided), colour = "black", width = 0.002) + 
+  geom_errorbar(aes(ymin = mean_cd_loss_avoided - 0.5*sd_cd_loss_avoided, ymax = mean_cd_loss_avoided + 0.5*sd_cd_loss_avoided), colour = "black", width = 2) + 
+  geom_point(shape = 21, size = 5) + 
+  xlab("Avoided species richness loss") + ylab("Avoided colour-pattern diversity loss") + 
   labs(fill = "Driver-specific abatement") + 
   # scale_fill_discrete(labels = c("All", "Climate", "Disturbance", "Hunting", "Habitat", "Invasive", "Pollution")) + 
-  scale_fill_discrete(labels = c("All drivers", "Climate change and severe weather", "Accidental mortality", "Hunting and collection","Habitat loss and degradation", "Invasive species and disease", "Pollution")) + 
+  scale_fill_discrete(labels = c("All drivers", "Climate change and severe weather", "Accidental mortality", "Hunting and collection","Habitat loss and degradation", "Invasive species and disease", "Pollution")) +
 #  coord_fixed() + # to fix the aspect ratio
   theme_minimal() + 
   theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
@@ -421,7 +432,7 @@ ggsave(
   ),
   plot = p,
   device = "svg", 
-  width = 6, height = 4
+  width = 7, height = 4
 )
 
 
@@ -449,50 +460,3 @@ write.csv(
     "mean_sd_diversity_loss_avoided_specific_abatements.csv"
   )
 )
-
-
-
-
-
-
-
-
-# THE JUICE
-# Calculate colour pattern diversity loss AVOIDED under each abatement scenario (excluding the 'full' 
-# row, which is the entire extant assemblage, and the no abatement scenario - we calculate the
-# loss avoided relative to the no abatement scenario)
-
-centr_dist_sims[centr_dist_sims$code != "none", "cd_loss_avoided_pc"] <- rep(centr_dist_sims[centr_dist_sims$code == "none", "cd_pc_loss"], times = 6) - centr_dist_sims[centr_dist_sims$code != "none", "cd_pc_loss"]
-
-# And the same for species richness loss
-centr_dist_sims[centr_dist_sims$code != "none", "sr_loss_avoided_pc"] <- rep(centr_dist_sims[centr_dist_sims$code == "none", "sr_pc_loss"], times = 6) - centr_dist_sims[centr_dist_sims$code != "none", "sr_pc_loss"]
-
-
-# plot colour pattern diversity loss vs species richness loss
-centr_dist_sims |> 
-  group_by(code) |> 
-  summarise(
-    mean_cd_loss = mean(cd_pc_loss),
-    sd_cd_loss = sd(cd_pc_loss),
-    mean_sr_loss = mean(sr_pc_loss),
-    sd_sr_loss = sd(sr_pc_loss)
-  ) |> 
-  ggplot(aes(x = mean_sr_loss, y = mean_cd_loss, colour = code, fill = code)) + 
-  geom_errorbar(aes(xmin = mean_sr_loss - sd_sr_loss, xmax = mean_sr_loss + sd_sr_loss), colour = "black") + 
-  geom_errorbar(aes(ymin = mean_cd_loss - sd_cd_loss, ymax = mean_cd_loss + sd_cd_loss), colour = "black") + 
-  geom_point(shape = 21, size = 5)
-
-# plot avoided colour pattern diversity loss vs avoided species richness loss
-centr_dist_sims |> 
-  group_by(code) |> 
-  summarise(
-    mean_cd_loss_avd = mean(cd_loss_avoided_pc),
-    sd_cd_loss_avd = sd(cd_loss_avoided_pc),
-    mean_sr_loss_avd = mean(sr_loss_avoided_pc),
-    sd_sr_loss_avd = sd(sr_loss_avoided_pc)
-  ) |> 
-  ggplot(aes(x = mean_sr_loss_avd, y = mean_cd_loss_avd, colour = code, fill = code)) + 
-  geom_errorbar(aes(xmin = mean_sr_loss_avd - sd_sr_loss_avd, xmax = mean_sr_loss_avd + sd_sr_loss_avd), colour = "black") + 
-  geom_errorbar(aes(ymin = mean_cd_loss_avd - sd_cd_loss_avd, ymax = mean_cd_loss_avd + sd_cd_loss_avd), colour = "black") + 
-  geom_point(shape = 21, size = 5)
-
