@@ -24,7 +24,7 @@ clade <- "Aves"
 # Colour space to use (e.g. "lab" [CIELAB], "srgb" [sRGB], "xyz" [TCSxyz], "jndxyzlum" [JND with xyz and luminance])
 space <- "lab"
 # remove extinction drivers with negligible contribution to colour pattern diversity loss?
-remove_negligible <- TRUE
+remove_negligible <- FALSE
 
 # Load data ----
 
@@ -48,11 +48,11 @@ div <- div %>%
 # discard unneeded columns and rename others
 div <- div %>% 
   select(
-    X, code, iteration, cd_loss_avoided_pc, sr_loss_avoided_abs
+    X, code, iteration, cd_loss_avoided_abs, sr_loss_avoided_abs
   ) %>% 
   rename(
     scenario = X,
-    cd_loss_av = cd_loss_avoided_pc,
+    cd_loss_av = cd_loss_avoided_abs,
     sr_loss_av = sr_loss_avoided_abs
   )
 
@@ -71,7 +71,7 @@ if(remove_negligible){
   # diversity loss
   div <- div %>% 
     filter(
-      !(code %in% c("cli", "inv", "pol"))
+      !(code %in% c("cli", "pol"))
     )
 }
 
@@ -122,8 +122,8 @@ colnames(intercepts) <- c("code", "value")
 # define order of explanatory variables
 if(remove_negligible){
   # for restricted model (without negligible drivers)
-  var_order <- c("hab", "exp", "dis", "sr_loss_av")
-  var_labels <- c("Habitat", "Hunting", "Disturbance", "sr_loss_av")
+  var_order <- c("hab", "exp", "inv", "dis", "sr_loss_av")
+  var_labels <- c("Habitat", "Hunting", "Invasive", "Disturbance", "sr_loss_av")
 } else if(!remove_negligible){
   # for full model
   var_order <- c("hab", "exp", "cli", "inv", "dis", "pol", "sr_loss_av")
@@ -171,12 +171,17 @@ points_plot <- div %>%
     colour = col_pal[2], lwd = 1
     ) +
   geom_abline(
+    slope = intercepts[intercepts$code == "sr_loss_av", "value"],
+    intercept = intercepts[intercepts$code == "Invasive", "value"],
+    colour = col_pal[4], lwd = 1
+  ) +
+  geom_abline(
     slope = intercepts[intercepts$code == "sr_loss_av", "value"], 
     intercept = intercepts[intercepts$code == "Disturbance", "value"], 
-    colour = col_pal[3], lwd = 1
+    colour = col_pal[5], lwd = 1
     ) +
   theme_minimal() +
-  labs(x = "Number of species extinctions avoided", y = "Colour-pattern diversity loss avoided (%)", col = "Threat") +
+  labs(x = "Number of species extinctions avoided", y = "Colour-pattern diversity loss avoided", col = "Threat") +
   scale_colour_manual(values = col_pal, name = "") +
   guides(colour = guide_legend(override.aes  =  list(alpha  =  1, size = 2))) +
   theme(text = element_text(family = "Leelawadee UI Semilight", size = 15),
@@ -196,12 +201,7 @@ if(!remove_negligible){
     geom_abline(
       slope = intercepts[intercepts$code == "sr_loss_av", "value"],
       intercept = intercepts[intercepts$code == "Climate", "value"],
-      colour = col_pal[5], lwd = 1
-      ) +
-    geom_abline(
-      slope = intercepts[intercepts$code == "sr_loss_av", "value"],
-      intercept = intercepts[intercepts$code == "Invasive", "value"],
-      colour = col_pal[4], lwd = 1
+      colour = col_pal[3], lwd = 1
       ) +
     geom_abline(
       slope = intercepts[intercepts$code == "sr_loss_av", "value"],
